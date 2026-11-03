@@ -1,0 +1,63 @@
+name: windows-portable
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Опубликовать GitHub Release с notch.exe"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            crates/core
+
+      - name: Core tests
+        run: cargo test --manifest-path crates/core/Cargo.toml
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build portable exe
+        # bundle.active = false: no MSI/NSIS, just target/release/notch.exe
+        run: npx tauri build
+
+      - name: Report size
+        shell: pwsh
+        run: |
+          $exe = Get-Item src-tauri/target/release/notch.exe
+          "notch.exe: {0:N2} MB" -f ($exe.Length / 1MB) | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notch-portable-${{ github.run_number }}
+          path: src-tauri/target/release/notch.exe
+
+      - name: Release
+        if: github.event_name == 'workflow_dispatch' && inputs.release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.${{ github.run_number }}
+          name: Notch 0.1.${{ github.run_number }}
+          files: src-tauri/target/release/notch.exe
