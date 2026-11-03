@@ -106,6 +106,30 @@ fn copy_entry(id: u64, close: bool, app: AppHandle, state: State<'_, Shared>) ->
     Ok(())
 }
 
+/// Pastes a history entry straight into the field the user was typing in.
+#[tauri::command]
+fn paste_entry(id: u64, app: AppHandle, state: State<'_, Shared>) -> Result<(), String> {
+    let text = lock(&state.texts).get(id).map(|e| e.text.clone()).ok_or("запись не найдена")?;
+    clip::write_text(&state, &text)?;
+    lock(&state.texts).push(&text, state::now_ms());
+    state.persist_texts();
+    state::emit_texts(&app);
+    state::paste_into_active(&app);
+    Ok(())
+}
+
+/// Pastes arbitrary text (a translation) into the active field.
+#[tauri::command]
+fn paste_text(text: String, app: AppHandle, state: State<'_, Shared>) -> Result<(), String> {
+    clip::write_text(&state, &text)?;
+    if lock(&state.texts).push(&text, state::now_ms()) {
+        state.persist_texts();
+        state::emit_texts(&app);
+    }
+    state::paste_into_active(&app);
+    Ok(())
+}
+
 /// Copies arbitrary text (e.g. a translation) and records it in the history.
 #[tauri::command]
 fn copy_text(text: String, app: AppHandle, state: State<'_, Shared>) -> Result<(), String> {
@@ -143,9 +167,30 @@ fn shelf_remove(id: String, app: AppHandle, state: State<'_, Shared>) {
     state::emit_shelf(&app);
 }
 
+/// Clears the loose screenshots; groups stay unless `everything`.
 #[tauri::command]
-fn shelf_clear(app: AppHandle, state: State<'_, Shared>) {
-    lock(&state.shelf).clear();
+fn shelf_clear(everything: bool, app: AppHandle, state: State<'_, Shared>) {
+    lock(&state.shelf).clear(everything);
+    state::emit_shelf(&app);
+}
+
+/// Drops screenshots or groups (`ids`) onto a screenshot or group (`target`).
+#[tauri::command]
+fn shelf_group(ids: Vec<String>, target: String, app: AppHandle, state: State<'_, Shared>) -> Result<String, String> {
+    let gid = lock(&state.shelf).group(&ids, &target, state::now_ms())?;
+    state::emit_shelf(&app);
+    Ok(gid)
+}
+
+#[tauri::command]
+fn shelf_ungroup(id: String, app: AppHandle, state: State<'_, Shared>) {
+    lock(&state.shelf).ungroup(&id);
+    state::emit_shelf(&app);
+}
+
+#[tauri::command]
+fn shelf_remove_group(group: String, app: AppHandle, state: State<'_, Shared>) {
+    lock(&state.shelf).remove_group(&group);
     state::emit_shelf(&app);
 }
 
@@ -316,6 +361,11 @@ pub fn run() {
             shelf_copy,
             shelf_remove,
             shelf_clear,
+            shelf_group,
+            shelf_ungroup,
+            shelf_remove_group,
+            paste_entry,
+            paste_text,
             open_data_folder,
             set_dragging,
             begin_input,

@@ -101,7 +101,7 @@ export function SettingsPanel({ settings, autostart, dataDir, onSaved, onAutosta
         </label>
         <label className="row">
           <span>Скриншотов на полке</span>
-          <input type="number" min={1} max={30} value={draft.shelfLimit} onChange={(e) => set("shelfLimit", Number(e.target.value))} />
+          <input type="number" min={1} max={100} value={draft.shelfLimit} onChange={(e) => set("shelfLimit", Number(e.target.value))} />
         </label>
         <label className="row">
           <span>Текстов в истории</span>

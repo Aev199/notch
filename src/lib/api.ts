@@ -20,6 +20,7 @@ export interface ShelfItem {
   width: number;
   height: number;
   created_at: number;
+  group: string | null;
 }
 
 export interface Settings {
@@ -79,7 +80,12 @@ export const api = {
   clearEntries: () => invoke("clear_entries"),
   shelfCopy: (id: string) => invoke("shelf_copy", { id }),
   shelfRemove: (id: string) => invoke("shelf_remove", { id }),
-  shelfClear: () => invoke("shelf_clear"),
+  shelfClear: (everything = false) => invoke("shelf_clear", { everything }),
+  shelfGroup: (ids: string[], target: string) => invoke<string>("shelf_group", { ids, target }),
+  shelfUngroup: (id: string) => invoke("shelf_ungroup", { id }),
+  shelfRemoveGroup: (group: string) => invoke("shelf_remove_group", { group }),
+  pasteEntry: (id: number) => invoke("paste_entry", { id }),
+  pasteText: (text: string) => invoke("paste_text", { text }),
   openDataFolder: () => invoke("open_data_folder"),
   setDragging: (dragging: boolean) => invoke("set_dragging", { dragging }),
   beginInput: () => invoke("begin_input"),

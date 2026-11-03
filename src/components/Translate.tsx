@@ -4,6 +4,7 @@ import { api, direction, errorText, type Provider, type Translation } from "../l
 import { translate } from "../lib/translate";
 import { isSuperseded } from "../lib/offline";
 import { CheckIcon, CopyIcon, PasteIcon } from "./Icons";
+import { InsertIcon } from "./Icons2";
 
 export interface Incoming {
   text: string;
@@ -135,6 +136,14 @@ export function Translate({ incoming, provider, providerName }: Props) {
           {busy && <span className="spinner" aria-label="перевожу" />}
           <button
             className="icon-btn small push"
+            title="Вставить перевод туда, где стоит курсор"
+            disabled={!result}
+            onClick={() => result && void api.pasteText(result.text)}
+          >
+            <InsertIcon width={14} height={14} />
+          </button>
+          <button
+            className="icon-btn small"
             title="Скопировать перевод"
             disabled={!result}
             onClick={() => void copy()}

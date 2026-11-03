@@ -4,6 +4,7 @@
 use base64::Engine;
 use image::{imageops::FilterType, ImageBuffer, ImageFormat, Rgba};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
@@ -13,6 +14,11 @@ use std::path::{Path, PathBuf};
 pub const THUMB_SIZE: u32 = 192;
 const PREFIX: &str = "shot-";
 const THUMB_SUFFIX: &str = ".thumb.png";
+/// Which screenshot belongs to which group (screenshots keep living as
+/// plain PNG files; this small index is all a group is).
+const GROUPS_FILE: &str = "groups.json";
+/// Safety cap for grouped screenshots, which the ring never deletes.
+pub const MAX_GROUPED: usize = 300;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ShelfItem {
@@ -27,6 +33,8 @@ pub struct ShelfItem {
     pub width: u32,
     pub height: u32,
     pub created_at: u64,
+    /// Group id (`g-<ms>`) when the screenshot was put into a group.
+    pub group: Option<String>,
 }
 
 #[derive(Debug)]
@@ -35,6 +43,8 @@ pub struct Shelf {
     limit: usize,
     items: Vec<ShelfItem>,
     last_hash: Option<u64>,
+    /// item id → group id
+    groups: BTreeMap<String, String>,
 }
 
 /// Cheap fingerprint of an RGBA buffer, used to ignore the same image being
@@ -60,7 +70,8 @@ impl Shelf {
     pub fn open(dir: impl Into<PathBuf>, limit: usize) -> std::io::Result<Self> {
         let dir = dir.into();
         fs::create_dir_all(&dir)?;
-        let mut shelf = Self { dir, limit: limit.max(1), items: Vec::new(), last_hash: None };
+        let mut shelf = Self { dir, limit: limit.max(1), items: Vec::new(), last_hash: None, groups: BTreeMap::new() };
+        shelf.load_groups();
         shelf.reload();
         shelf.enforce_limit();
         Ok(shelf)
@@ -104,7 +115,107 @@ impl Shelf {
             }
         }
         items.sort_by(|a, b| b.id.cmp(&a.id));
+        for item in &mut items {
+            item.group = self.groups.get(&item.id).cloned();
+        }
+        // Forget index entries whose files are gone.
+        let before = self.groups.len();
+        self.groups.retain(|id, _| items.iter().any(|i| &i.id == id));
         self.items = items;
+        if before != self.groups.len() {
+            self.save_groups();
+        }
+    }
+
+    fn load_groups(&mut self) {
+        self.groups = fs::read(self.dir.join(GROUPS_FILE))
+            .ok()
+            .and_then(|raw| serde_json::from_slice(&raw).ok())
+            .unwrap_or_default();
+    }
+
+    fn save_groups(&self) {
+        if let Ok(json) = serde_json::to_vec_pretty(&self.groups) {
+            let _ = crate::settings::write_atomic(&self.dir.join(GROUPS_FILE), &json);
+        }
+    }
+
+    fn sync_group_fields(&mut self) {
+        for item in &mut self.items {
+            item.group = self.groups.get(&item.id).cloned();
+        }
+        self.save_groups();
+    }
+
+    /// Groups whose size dropped to one stop being groups.
+    fn dissolve_singletons(&mut self) {
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        for g in self.groups.values() {
+            *counts.entry(g.clone()).or_default() += 1;
+        }
+        self.groups.retain(|_, g| counts.get(g).copied().unwrap_or(0) > 1);
+    }
+
+    /// Drops `ids` onto `target` (a screenshot or a group id): the target's
+    /// group grows, or a new group is made of the target and `ids`. Whole
+    /// groups among `ids` are merged. Returns the resulting group id.
+    pub fn group(&mut self, ids: &[String], target: &str, now_ms: u64) -> Result<String, String> {
+        let is_group = |shelf: &Self, id: &str| shelf.groups.values().any(|g| g == id);
+        let target_group = if is_group(self, target) {
+            target.to_string()
+        } else if let Some(g) = self.groups.get(target) {
+            g.clone()
+        } else if self.get(target).is_some() {
+            let mut gid = format!("g-{now_ms}");
+            let mut n = 1;
+            while is_group(self, &gid) {
+                gid = format!("g-{now_ms}-{n}");
+                n += 1;
+            }
+            self.groups.insert(target.to_string(), gid.clone());
+            gid
+        } else {
+            return Err("скриншот не найден".into());
+        };
+        for id in ids {
+            if is_group(self, id) {
+                let members: Vec<String> =
+                    self.groups.iter().filter(|(_, g)| *g == id).map(|(item, _)| item.clone()).collect();
+                for item in members {
+                    self.groups.insert(item, target_group.clone());
+                }
+            } else if self.get(id).is_some() {
+                self.groups.insert(id.clone(), target_group.clone());
+            }
+        }
+        self.dissolve_singletons();
+        self.sync_group_fields();
+        Ok(target_group)
+    }
+
+    /// Takes one screenshot out of its group (it becomes a loose one again).
+    pub fn ungroup(&mut self, id: &str) -> bool {
+        if self.groups.remove(id).is_none() {
+            return false;
+        }
+        self.dissolve_singletons();
+        self.sync_group_fields();
+        self.enforce_limit();
+        true
+    }
+
+    /// Screenshots of a group, newest first.
+    pub fn group_items(&self, gid: &str) -> Vec<&ShelfItem> {
+        self.items.iter().filter(|i| i.group.as_deref() == Some(gid)).collect()
+    }
+
+    /// Deletes a whole group with its files.
+    pub fn remove_group(&mut self, gid: &str) -> usize {
+        let ids: Vec<String> = self.group_items(gid).iter().map(|i| i.id.clone()).collect();
+        for id in &ids {
+            self.remove(id);
+        }
+        ids.len()
     }
 
     fn paths(&self, stem: &str) -> (PathBuf, PathBuf) {
@@ -128,6 +239,7 @@ impl Shelf {
             width,
             height,
             created_at,
+            group: None,
         })
     }
 
@@ -166,6 +278,7 @@ impl Shelf {
             width,
             height,
             created_at: now_ms,
+            group: None,
         };
         self.items.insert(0, item.clone());
         self.enforce_limit();
@@ -184,22 +297,44 @@ impl Shelf {
         let item = self.items.remove(pos);
         let _ = fs::remove_file(&item.path);
         let _ = fs::remove_file(&item.thumb_path);
+        if self.groups.remove(id).is_some() {
+            self.dissolve_singletons();
+            self.sync_group_fields();
+        }
         true
     }
 
-    pub fn clear(&mut self) {
-        for item in std::mem::take(&mut self.items) {
+    /// Deletes the loose screenshots; groups are kept (they were made on purpose).
+    /// With `everything` the groups go too.
+    pub fn clear(&mut self, everything: bool) {
+        let (gone, kept): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.items).into_iter().partition(|i| everything || i.group.is_none());
+        for item in gone {
             let _ = fs::remove_file(&item.path);
             let _ = fs::remove_file(&item.thumb_path);
         }
+        self.items = kept;
+        if everything {
+            self.groups.clear();
+            self.save_groups();
+        }
     }
 
+    /// The ring: at most `limit` loose screenshots (oldest deleted first);
+    /// grouped ones are kept up to `MAX_GROUPED`.
     fn enforce_limit(&mut self) {
-        while self.items.len() > self.limit {
-            if let Some(item) = self.items.pop() {
-                let _ = fs::remove_file(&item.path);
-                let _ = fs::remove_file(&item.thumb_path);
+        let mut loose = 0;
+        let mut grouped = 0;
+        let mut drop = Vec::new();
+        for item in &self.items {
+            let count = if item.group.is_some() { &mut grouped } else { &mut loose };
+            *count += 1;
+            if (item.group.is_none() && loose > self.limit) || (item.group.is_some() && grouped > MAX_GROUPED) {
+                drop.push(item.id.clone());
             }
+        }
+        for id in drop {
+            self.remove(&id);
         }
     }
 }
@@ -264,7 +399,7 @@ mod tests {
         let a = shelf.add_rgba(4, 4, pixels(4, 4, 1), 7).unwrap().unwrap();
         let b = shelf.add_rgba(4, 4, pixels(4, 4, 2), 7).unwrap().unwrap();
         assert_ne!(a.id, b.id);
-        shelf.clear();
+        shelf.clear(true);
         assert!(shelf.items().is_empty());
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -274,6 +409,70 @@ mod tests {
         let dir = temp_dir("bad");
         let mut shelf = Shelf::open(&dir, 5).unwrap();
         assert!(shelf.add_rgba(10, 10, vec![0; 12], 1).is_err());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn groups_are_kept_by_ring_and_survive_reload() {
+        let dir = temp_dir("groups");
+        let mut shelf = Shelf::open(&dir, 2).unwrap();
+        let ids: Vec<String> =
+            (1..=3).map(|i| shelf.add_rgba(4, 4, pixels(4, 4, i), i as u64).unwrap().unwrap().id).collect();
+        // ids[0] fell out of the ring of 2.
+        assert_eq!(shelf.items().len(), 2);
+        let gid = shelf.group(&[ids[1].clone()], &ids[2], 100).unwrap();
+        assert_eq!(shelf.group_items(&gid).len(), 2);
+
+        // Grouped screenshots do not count against the ring.
+        for i in 4..=6 {
+            shelf.add_rgba(4, 4, pixels(4, 4, i), i as u64).unwrap();
+        }
+        assert_eq!(shelf.items().len(), 4);
+        assert_eq!(shelf.group_items(&gid).len(), 2);
+
+        let reopened = Shelf::open(&dir, 2).unwrap();
+        assert_eq!(reopened.group_items(&gid).len(), 2);
+        assert_eq!(reopened.get(&ids[1]).unwrap().group.as_deref(), Some(gid.as_str()));
+
+        // Clearing keeps groups unless asked.
+        let mut shelf = reopened;
+        shelf.clear(false);
+        assert_eq!(shelf.items().len(), 2);
+        shelf.clear(true);
+        assert!(shelf.items().is_empty());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn merge_ungroup_and_dissolve() {
+        let dir = temp_dir("merge");
+        let mut shelf = Shelf::open(&dir, 10).unwrap();
+        let ids: Vec<String> =
+            (1..=5).map(|i| shelf.add_rgba(4, 4, pixels(4, 4, i), i as u64).unwrap().unwrap().id).collect();
+        let a = shelf.group(&[ids[0].clone()], &ids[1], 10).unwrap();
+        let b = shelf.group(&[ids[2].clone()], &ids[3], 11).unwrap();
+        assert_ne!(a, b);
+        // Drop group b onto a group member of a: all four end up in a.
+        assert_eq!(shelf.group(&[b.clone()], &ids[0], 12).unwrap(), a);
+        assert_eq!(shelf.group_items(&a).len(), 4);
+        assert!(shelf.group_items(&b).is_empty());
+        // Drop a loose one onto the group id itself.
+        shelf.group(&[ids[4].clone()], &a, 13).unwrap();
+        assert_eq!(shelf.group_items(&a).len(), 5);
+
+        for id in &ids[..3] {
+            assert!(shelf.ungroup(id));
+        }
+        assert_eq!(shelf.group_items(&a).len(), 2);
+        // Removing one of the last two dissolves the group.
+        assert!(shelf.remove(&ids[3]));
+        assert!(shelf.group_items(&a).is_empty());
+        assert!(shelf.get(&ids[4]).unwrap().group.is_none());
+        assert!(shelf.group(&[ids[4].clone()], "nope", 14).is_err());
+
+        let gid = shelf.group(&[ids[0].clone()], &ids[1], 15).unwrap();
+        assert_eq!(shelf.remove_group(&gid), 2);
+        assert_eq!(shelf.items().len(), 2);
         fs::remove_dir_all(&dir).unwrap();
     }
 }

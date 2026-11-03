@@ -46,7 +46,7 @@ impl Default for Settings {
             llm_key: String::new(),
             hotkey: "Ctrl+Alt+T".into(),
             double_copy_translate: true,
-            shelf_limit: 8,
+            shelf_limit: 30,
             text_limit: 30,
             persist_text_history: false,
             hide_in_fullscreen: true,
@@ -60,7 +60,7 @@ impl Default for Settings {
 impl Settings {
     /// Clamps numbers into sane ranges after loading or editing.
     pub fn sanitized(mut self) -> Self {
-        self.shelf_limit = self.shelf_limit.clamp(1, 30);
+        self.shelf_limit = self.shelf_limit.clamp(1, 100);
         self.text_limit = self.text_limit.clamp(5, 100);
         self.idle_seconds = self.idle_seconds.clamp(1, 600);
         self.hotkey = self.hotkey.trim().to_string();
@@ -145,7 +145,7 @@ mod tests {
 
         fs::write(&path, r#"{"shelfLimit": 500, "provider": "llm"}"#).unwrap();
         let loaded = Settings::load(&path);
-        assert_eq!(loaded.shelf_limit, 30);
+        assert_eq!(loaded.shelf_limit, 100);
         assert_eq!(loaded.provider, Provider::Llm);
         assert_eq!(loaded.hotkey, "Ctrl+Alt+T");
         fs::remove_dir_all(&dir).unwrap();

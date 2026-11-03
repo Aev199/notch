@@ -195,3 +195,25 @@ pub fn end_input(app: &AppHandle, restore: bool) {
     }
     let _ = app.emit("input-mode", false);
 }
+
+/// Closes the island and presses Ctrl+V in the window the user was working
+/// in. The caller has already put the text on the clipboard.
+pub fn paste_into_active(app: &AppHandle) {
+    let shared = app.state::<Shared>().inner().clone();
+    let prev = shared.prev_foreground.load(Ordering::Relaxed);
+    // Leaving input mode hands the foreground back to the previous window.
+    end_input(app, true);
+    if lock(&shared.hover).close(now_ms()).is_some() {
+        let mode = lock(&shared.hover).mode();
+        let _ = app.emit("island", IslandEvent { mode, tab: None, focus: false });
+    }
+    std::thread::spawn(move || {
+        // Let the clipboard settle and the target window take the focus back.
+        std::thread::sleep(std::time::Duration::from_millis(90));
+        if win::foreground_window() == shared.hwnd() && prev != 0 {
+            win::force_foreground(prev);
+            std::thread::sleep(std::time::Duration::from_millis(60));
+        }
+        win::send_paste();
+    });
+}

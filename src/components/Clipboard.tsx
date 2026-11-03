@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from "motion/react";
 import { api, errorText, timeAgo, type TextEntry } from "../lib/api";
 import { CloseIcon } from "./Icons";
+import { InsertIcon } from "./Icons2";
 
 interface Props {
   entries: TextEntry[];
@@ -12,7 +13,7 @@ export function Clipboard({ entries, onError }: Props) {
     return (
       <div className="empty">
         <p>Буфер пуст</p>
-        <span>Копируйте текст как обычно (Ctrl+C) — последние фрагменты соберутся здесь. Клик по строке вернёт её в буфер.</span>
+        <span>Копируйте текст как обычно (Ctrl+C) — последние фрагменты соберутся здесь. Клик по строке вернёт её в буфер, «Вставить» — сразу вставит туда, где стоит курсор.</span>
       </div>
     );
   }
@@ -30,21 +31,34 @@ export function Clipboard({ entries, onError }: Props) {
             transition={{ type: "spring", stiffness: 420, damping: 34 }}
             role="button"
             tabIndex={-1}
-            title="Скопировать и свернуть"
+            title="Клик — скопировать и свернуть"
             onClick={() => void api.copyEntry(entry.id, true).catch((e) => onError(errorText(e)))}
           >
             <span className="clip-text">{entry.text}</span>
             <span className="clip-meta">{timeAgo(entry.copied_at)}</span>
-            <button
-              className="icon-btn small"
-              title="Удалить из истории"
-              onClick={(e) => {
-                e.stopPropagation();
-                void api.removeEntry(entry.id);
-              }}
-            >
-              <CloseIcon width={13} height={13} />
-            </button>
+            <span className="clip-actions">
+              <button
+                className="paste-btn"
+                title="Вставить в поле, где стоит курсор"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void api.pasteEntry(entry.id).catch((err) => onError(errorText(err)));
+                }}
+              >
+                <InsertIcon width={13} height={13} />
+                Вставить
+              </button>
+              <button
+                className="icon-btn small"
+                title="Удалить из истории"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void api.removeEntry(entry.id);
+                }}
+              >
+                <CloseIcon width={13} height={13} />
+              </button>
+            </span>
           </motion.div>
         ))}
       </AnimatePresence>

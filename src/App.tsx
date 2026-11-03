@@ -150,8 +150,12 @@ export default function App() {
                     </button>
                   ))}
                   <span className="push" />
-                  {tab === "shelf" && shelf.length > 0 && (
-                    <button className="btn ghost" onClick={() => void api.shelfClear()}>
+                  {tab === "shelf" && shelf.some((i) => !i.group) && (
+                    <button
+                      className="btn ghost"
+                      title="Удалить скриншоты вне групп (группы останутся)"
+                      onClick={() => void api.shelfClear()}
+                    >
                       Очистить
                     </button>
                   )}

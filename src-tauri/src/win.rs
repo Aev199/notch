@@ -12,7 +12,10 @@ mod imp {
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
     use windows_sys::Win32::System::Threading::{AttachThreadInput, CreateMutexW, GetCurrentThreadId};
     use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY,
+        VK_CONTROL, VK_LBUTTON, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_V,
+    };
     use windows_sys::Win32::UI::Shell::{
         SHQueryUserNotificationState, QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
     };
@@ -177,6 +180,34 @@ mod imp {
         }
     }
 
+    fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: if up { KEYEVENTF_KEYUP } else { 0 }, time: 0, dwExtraInfo: 0 },
+            },
+        }
+    }
+
+    fn key_down(vk: VIRTUAL_KEY) -> bool {
+        (unsafe { GetAsyncKeyState(vk as i32) } as u16 & 0x8000) != 0
+    }
+
+    /// Presses Ctrl+V in whatever window has the keyboard focus. Modifiers the
+    /// user may still hold (Alt, Shift, Win) are released first so the target
+    /// sees a clean Ctrl+V.
+    pub fn send_paste() -> bool {
+        let mut inputs = Vec::new();
+        for vk in [VK_MENU, VK_LMENU, VK_RMENU, VK_SHIFT, VK_LSHIFT, VK_RSHIFT, VK_LWIN, VK_RWIN] {
+            if key_down(vk) {
+                inputs.push(key(vk, true));
+            }
+        }
+        inputs.extend([key(VK_CONTROL, false), key(VK_V, false), key(VK_V, true), key(VK_CONTROL, true)]);
+        let sent = unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
+        sent as usize == inputs.len()
+    }
+
     /// Password managers mark secrets with these formats; such clipboard
     /// content must not be recorded.
     pub fn clipboard_marked_private() -> bool {
@@ -280,6 +311,9 @@ mod imp {
     }
     pub fn force_foreground(_: isize) {}
     pub fn clipboard_marked_private() -> bool {
+        false
+    }
+    pub fn send_paste() -> bool {
         false
     }
     /// Returns `false` when another copy of the app already runs in this session.
