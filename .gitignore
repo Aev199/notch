@@ -5,3 +5,4 @@ src-tauri/target/
 crates/core/target/
 src-tauri/gen/
 *.log
+public/bergamot/

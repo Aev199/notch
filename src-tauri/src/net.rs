@@ -43,9 +43,17 @@ pub async fn translate(settings: &Settings, text: &str) -> Result<Translation, S
     }
     let (from, to) = translate::direction(text);
     let net = |e: reqwest::Error| {
-        if e.is_timeout() { "сервер не ответил вовремя".to_string() } else { format!("сеть: {e}") }
+        if e.is_timeout() {
+            "сервер не ответил вовремя".to_string()
+        } else if e.is_connect() || e.is_request() {
+            "нет доступа к сети — включите офлайн-перевод в настройках".to_string()
+        } else {
+            format!("сеть: {e}")
+        }
     };
     let result = match settings.provider {
+        // Runs in the webview (WebAssembly); never reaches the backend.
+        Provider::Offline => return Err("офлайн-перевод выполняется в окне".into()),
         Provider::Google => {
             // Very long texts do not fit into a GET URL; the endpoint also accepts POST.
             let resp = if text.len() > 1500 {

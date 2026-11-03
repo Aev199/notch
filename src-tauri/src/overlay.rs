@@ -1,18 +1,18 @@
-//! The overlay loop: polls the cursor (Win32 `GetCursorPos`, every 35 ms),
-//! drives the hover state machine, toggles click-through and hides the island
-//! while a fullscreen app runs.
+//! The overlay loop: polls the cursor (Win32 `GetCursorPos`; every 16 ms near
+//! the top of the screen, 50 ms elsewhere), drives the hover state machine,
+//! owns the click-through style, shrinks the island to a strip over
+//! fullscreen windows and hides it in exclusive fullscreen games.
 
 use notch_core::hover::{Rect, Sample};
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, PhysicalPosition};
 
-use crate::state::{announce, lock, now_ms, Shared, COMPACT_H, COMPACT_W, STAGE_H, STAGE_W};
+use crate::state::{announce, lock, now_ms, Shared, COMPACT_H, COMPACT_W, STAGE_H, STAGE_W, STRIP_H, STRIP_W};
 use crate::win;
 
-const TICK: Duration = Duration::from_millis(35);
-/// Fullscreen check and window housekeeping run every N ticks (~1 s).
-const SLOW_EVERY: u32 = 28;
+/// Fullscreen check and window housekeeping run this often.
+const SLOW_EVERY: Duration = Duration::from_millis(900);
 
 /// Puts the stage at the top centre of the primary monitor.
 pub fn place_window(app: &AppHandle) {
@@ -40,65 +40,79 @@ pub fn spawn(app: AppHandle) {
         .expect("overlay thread");
 }
 
+/// Fast polling near the notch (open in ~1 frame), slow elsewhere.
+const FAST: Duration = Duration::from_millis(16);
+const SLOW: Duration = Duration::from_millis(50);
+/// Height of the screen band (logical px) where the fast rate kicks in.
+const NEAR_BAND: f64 = 120.0;
+
 fn run(app: AppHandle) {
     let shared = app.state::<Shared>().inner().clone();
-    let Some(window) = app.get_webview_window("main") else { return };
-    let mut interactive = false;
-    let _ = window.set_ignore_cursor_events(true);
-    win::ensure_tool_window(shared.hwnd());
-    let mut tick: u32 = 0;
+    let mut last_slow = Instant::now();
+    let mut force_thin = false;
+    let mut delay = FAST;
 
     loop {
-        std::thread::sleep(TICK);
-        tick = tick.wrapping_add(1);
+        std::thread::sleep(delay);
         let hwnd = shared.hwnd();
 
-        if tick % SLOW_EVERY == 0 {
-            housekeeping(&app, &shared, hwnd);
+        if last_slow.elapsed() >= SLOW_EVERY {
+            last_slow = Instant::now();
+            force_thin = housekeeping(&app, &shared, hwnd);
         }
         if shared.hidden_for_fullscreen.load(Ordering::Relaxed) {
+            win::apply_styles(hwnd, true);
+            delay = SLOW;
             continue;
         }
 
         let (Some(cursor), Some((x, y, w, h, scale))) = (win::cursor_pos(), win::window_rect(hwnd)) else {
+            delay = SLOW;
             continue;
         };
         let stage = Rect { x, y, w, h };
         let (ew, eh) = *lock(&shared.expanded_size);
+        let idle_thin_ms = {
+            let s = lock(&shared.settings);
+            s.idle_thin.then_some(s.idle_seconds * 1000)
+        };
         let sample = Sample {
             now_ms: now_ms(),
             cursor,
             compact: Rect::top_center(&stage, COMPACT_W * scale, COMPACT_H * scale),
+            strip: Rect::top_center(&stage, STRIP_W * scale, STRIP_H * scale),
             expanded: Rect::top_center(&stage, ew * scale, eh * scale),
             leave_margin: 14.0 * scale,
             left_button_down: win::left_button_down(),
+            idle_thin_ms,
+            force_thin,
         };
-        let (transition, now_interactive) = {
+        let (transition, interactive, expanded) = {
             let mut machine = lock(&shared.hover);
             let t = machine.tick(&sample);
-            (t, machine.interactive())
+            (t, machine.interactive(), machine.is_expanded())
         };
-        if now_interactive != interactive {
-            interactive = now_interactive;
-            let _ = window.set_ignore_cursor_events(!interactive);
-            win::ensure_tool_window(hwnd);
-        }
+        // Re-applied every tick: repairs any style rewrite done by Tauri.
+        win::apply_styles(hwnd, !interactive);
         if let Some(t) = transition {
-            announce(&app, t, None);
+            announce(&app, t);
         }
+        let near = expanded || (cursor.1 - y) < NEAR_BAND * scale;
+        delay = if near { FAST } else { SLOW };
     }
 }
 
-fn housekeeping(app: &AppHandle, shared: &Shared, hwnd: isize) {
-    win::ensure_tool_window(hwnd);
+/// Runs about once a second. Returns whether the island must stay a thin
+/// strip because a fullscreen window is in front.
+fn housekeeping(app: &AppHandle, shared: &Shared, hwnd: isize) -> bool {
     let hide_enabled = lock(&shared.settings).hide_in_fullscreen;
     let expanded = lock(&shared.hover).is_expanded();
-    let fullscreen = hide_enabled && !expanded && win::fullscreen_app_active();
+    let exclusive = hide_enabled && !expanded && win::exclusive_fullscreen_active();
     let hidden = shared.hidden_for_fullscreen.load(Ordering::Relaxed);
-    if fullscreen && !hidden {
+    if exclusive && !hidden {
         shared.hidden_for_fullscreen.store(true, Ordering::Relaxed);
         win::show_no_activate(hwnd, false);
-    } else if !fullscreen && hidden {
+    } else if !exclusive && hidden {
         shared.hidden_for_fullscreen.store(false, Ordering::Relaxed);
         win::show_no_activate(hwnd, true);
     } else if !hidden && !win::is_visible(hwnd) {
@@ -108,4 +122,5 @@ fn housekeeping(app: &AppHandle, shared: &Shared, hwnd: isize) {
         // Follows resolution / DPI / primary-monitor changes.
         place_window(app);
     }
+    win::busy_fullscreen_active() || win::foreground_fills_monitor(hwnd)
 }

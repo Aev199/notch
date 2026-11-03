@@ -10,7 +10,8 @@ interface Props {
 }
 
 const PROVIDERS: { id: Provider; name: string }[] = [
-  { id: "google", name: "Google (без ключа)" },
+  { id: "offline", name: "Офлайн (встроенный, без сети)" },
+  { id: "google", name: "Google (нужен интернет)" },
   { id: "deepl", name: "DeepL API" },
   { id: "llm", name: "Локальная модель" },
 ];
@@ -115,8 +116,18 @@ export function SettingsPanel({ settings, autostart, dataDir, onSaved, onAutosta
       <section>
         <h3>Поведение</h3>
         <label className="check">
+          <input type="checkbox" checked={draft.idleThin} onChange={(e) => set("idleThin", e.target.checked)} />
+          <span>Сворачивать в тонкую полосу при бездействии</span>
+        </label>
+        {draft.idleThin && (
+          <label className="row">
+            <span>Через, секунд</span>
+            <input type="number" min={1} max={600} value={draft.idleSeconds} onChange={(e) => set("idleSeconds", Number(e.target.value))} />
+          </label>
+        )}
+        <label className="check">
           <input type="checkbox" checked={draft.hideInFullscreen} onChange={(e) => set("hideInFullscreen", e.target.checked)} />
-          <span>Прятать в полноэкранных играх и видео</span>
+          <span>Прятать совсем в эксклюзивном полноэкранном режиме игр и презентаций</span>
         </label>
         <label className="check">
           <input type="checkbox" checked={autostart} onChange={(e) => void toggleAutostart(e.target.checked)} />

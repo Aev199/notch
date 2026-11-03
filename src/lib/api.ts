@@ -2,7 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type Tab = "shelf" | "clipboard" | "translate" | "settings";
-export type Provider = "google" | "deepl" | "llm";
+export type Provider = "offline" | "google" | "deepl" | "llm";
+export type Mode = "open" | "compact" | "thin";
 export type Lang = "ru" | "en";
 
 export interface TextEntry {
@@ -34,6 +35,8 @@ export interface Settings {
   persistTextHistory: boolean;
   hideInFullscreen: boolean;
   captureImages: boolean;
+  idleThin: boolean;
+  idleSeconds: number;
 }
 
 export interface Snapshot {
@@ -43,7 +46,7 @@ export interface Snapshot {
   compact: [number, number];
   dataDir: string;
   autostart: boolean;
-  expanded: boolean;
+  mode: Mode;
 }
 
 export interface Translation {
@@ -54,8 +57,15 @@ export interface Translation {
 }
 
 export interface IslandEvent {
-  expanded: boolean;
+  mode: Mode;
   tab: Exclude<Tab, "settings"> | null;
+  /** Put the caret into the translator field. */
+  focus: boolean;
+}
+
+export interface TranslateRequest {
+  text: string;
+  focus: boolean;
 }
 
 export const api = {
@@ -74,7 +84,7 @@ export const api = {
   setDragging: (dragging: boolean) => invoke("set_dragging", { dragging }),
   beginInput: () => invoke("begin_input"),
   endInput: () => invoke("end_input"),
-  translate: (text: string) => invoke<Translation>("translate", { text }),
+  translateOnline: (text: string) => invoke<Translation>("translate", { text }),
   clipboardText: () => invoke<string | null>("clipboard_text"),
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { new: settings }),
   setAutostart: (enabled: boolean) => invoke<boolean>("set_autostart", { enabled }),

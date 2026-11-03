@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::state::{emit_shelf, emit_texts, lock, now_ms, open_island, Shared};
+use crate::state::{emit_shelf, emit_texts, lock, now_ms, open_island, poke, Shared};
 use crate::win;
 
 /// Two copies of the same text within this window (ms) mean "translate it".
@@ -61,6 +61,7 @@ impl Handler {
             let added = lock(&shared.shelf).add_rgba(w, h, img.bytes.into_owned(), now);
             match added {
                 Ok(Some(_)) => {
+                    poke(&self.app);
                     emit_shelf(&self.app);
                     let _ = self.app.emit("captured", "shelf");
                 }
@@ -73,6 +74,7 @@ impl Handler {
     fn on_text(&mut self, shared: &Shared, text: &str, now: u64) {
         let changed = lock(&shared.texts).push(text, now);
         if changed {
+            poke(&self.app);
             shared.persist_texts();
             emit_texts(&self.app);
             let _ = self.app.emit("captured", "clipboard");
@@ -83,17 +85,25 @@ impl Handler {
             if *prev == normalized && (DOUBLE_COPY_MIN_MS..=DOUBLE_COPY_MAX_MS).contains(&now.saturating_sub(*at)));
         if double && lock(&shared.settings).double_copy_translate {
             self.last_text = None;
-            request_translation(&self.app, normalized);
+            request_translation(&self.app, normalized, false);
         } else {
             self.last_text = Some((normalized, now));
         }
     }
 }
 
-/// Opens the island on the translator tab and hands it the text.
-pub fn request_translation(app: &AppHandle, text: String) {
-    open_island(app, Some("translate"), 8_000);
-    let _ = app.emit("translate-request", text);
+#[derive(serde::Serialize, Clone)]
+struct TranslateRequest {
+    text: String,
+    focus: bool,
+}
+
+/// Opens the island on the translator tab and hands it the text. With
+/// `focus` (hotkey) the caret goes into the source field; the double Ctrl+C
+/// gesture leaves the keyboard where the user is working.
+pub fn request_translation(app: &AppHandle, text: String, focus: bool) {
+    let _ = app.emit("translate-request", TranslateRequest { text, focus });
+    open_island(app, Some("translate"), 8_000, focus);
 }
 
 /// Current clipboard text, if any.

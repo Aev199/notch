@@ -45,8 +45,11 @@ impl Lang {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
-    /// Free public web endpoint of Google Translate (no key).
+    /// Built-in offline engine (Bergamot / Firefox Translations models, runs
+    /// in the webview as WebAssembly; no network at all).
     #[default]
+    Offline,
+    /// Free public web endpoint of Google Translate (no key).
     Google,
     /// DeepL API (free or pro key).
     Deepl,

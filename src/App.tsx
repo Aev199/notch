@@ -1,18 +1,33 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
-import { api, on, type IslandEvent, type Settings, type ShelfItem, type Snapshot, type Tab, type TextEntry } from "./lib/api";
+import {
+  api,
+  on,
+  type IslandEvent,
+  type Mode,
+  type Settings,
+  type ShelfItem,
+  type Snapshot,
+  type Tab,
+  type TextEntry,
+  type TranslateRequest,
+} from "./lib/api";
+import { translateOffline } from "./lib/offline";
 import { Shelf } from "./components/Shelf";
 import { Clipboard } from "./components/Clipboard";
-import { Translate } from "./components/Translate";
+import { Translate, type Incoming } from "./components/Translate";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ClipIcon, CloseIcon, GearIcon, ImageIcon, TranslateIcon } from "./components/Icons";
 
-/** Logical sizes; the collapsed one must match the backend hitbox. */
-const COMPACT = { width: 180, height: 32 };
-const EXPANDED = { width: 520, height: 252 };
+/** Logical sizes; compact and expanded must match the backend hitboxes. */
+const SIZES: Record<Mode, { width: number; height: number; radius: number }> = {
+  thin: { width: 140, height: 5, radius: 3 },
+  compact: { width: 180, height: 32, radius: 16 },
+  open: { width: 520, height: 252, radius: 26 },
+};
 
-// Spring tuned after PILLAR's "snappy" preset: quick, with a hint of overshoot.
-const SPRING = { type: "spring" as const, stiffness: 420, damping: 32, mass: 0.9 };
+// Stiff spring: the island reaches its size in ~0.2 s with a hint of overshoot.
+const SPRING = { type: "spring" as const, stiffness: 560, damping: 38, mass: 0.75 };
 
 const TABS: { id: Exclude<Tab, "settings">; title: string; Icon: typeof ImageIcon }[] = [
   { id: "shelf", title: "Полка", Icon: ImageIcon },
@@ -20,42 +35,52 @@ const TABS: { id: Exclude<Tab, "settings">; title: string; Icon: typeof ImageIco
   { id: "translate", title: "Перевод", Icon: TranslateIcon },
 ];
 
-const PROVIDER_NAMES = { google: "Google", deepl: "DeepL", llm: "Локальная модель" } as const;
+const PROVIDER_NAMES = { offline: "офлайн", google: "Google", deepl: "DeepL", llm: "Локальная модель" } as const;
 
 export default function App() {
-  const [expanded, setExpanded] = useState(false);
+  const [mode, setMode] = useState<Mode>("compact");
   const [tab, setTab] = useState<Tab>("shelf");
   const [texts, setTexts] = useState<TextEntry[]>([]);
   const [shelf, setShelf] = useState<ShelfItem[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [autostart, setAutostart] = useState(false);
-  const [incoming, setIncoming] = useState<{ text: string; seq: number } | null>(null);
+  const [incoming, setIncoming] = useState<Incoming | null>(null);
   const [flash, setFlash] = useState<"shelf" | "clipboard" | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const flashTimer = useRef<number>();
   const toastTimer = useRef<number>();
 
   useEffect(() => {
-    void api.setIslandSize(EXPANDED.width, EXPANDED.height);
+    void api.setIslandSize(SIZES.open.width, SIZES.open.height);
+    let warm: number | undefined;
     void api.snapshot().then((s) => {
       setSnapshot(s);
       setSettings(s.settings);
       setTexts(s.texts);
       setShelf(s.shelf);
       setAutostart(s.autostart);
-      setExpanded(s.expanded);
+      setMode(s.mode);
+      if (s.settings.provider === "offline") {
+        // Load the engine and both models in the background so the first
+        // double Ctrl+C is answered right away.
+        warm = window.setTimeout(() => {
+          translateOffline("привет", "ru", "en")
+            .then(() => translateOffline("hello", "en", "ru"))
+            .catch(() => {});
+        }, 1500);
+      }
     });
     let seq = 0;
     const subs = [
       on<IslandEvent>("island", (e) => {
-        setExpanded(e.expanded);
+        setMode(e.mode);
         if (e.tab) setTab(e.tab);
-        if (!e.expanded) (document.activeElement as HTMLElement | null)?.blur();
+        if (e.mode !== "open") (document.activeElement as HTMLElement | null)?.blur();
       }),
       on<TextEntry[]>("texts", setTexts),
       on<ShelfItem[]>("shelf", setShelf),
-      on<string>("translate-request", (text) => setIncoming({ text, seq: ++seq })),
+      on<TranslateRequest>("translate-request", (r) => setIncoming({ ...r, seq: ++seq })),
       on<"shelf" | "clipboard">("captured", (kind) => {
         setFlash(kind);
         window.clearTimeout(flashTimer.current);
@@ -65,7 +90,10 @@ export default function App() {
         if (!active) (document.activeElement as HTMLElement | null)?.blur();
       }),
     ];
-    return () => subs.forEach((p) => void p.then((off) => off()));
+    return () => {
+      window.clearTimeout(warm);
+      subs.forEach((p) => void p.then((off) => off()));
+    };
   }, []);
 
   const showError = (message: string) => {
@@ -74,20 +102,21 @@ export default function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), 3500);
   };
 
-  const size = expanded ? EXPANDED : COMPACT;
+  const expanded = mode === "open";
+  const size = SIZES[mode];
   const providerName = settings ? PROVIDER_NAMES[settings.provider] : "";
 
   return (
     <MotionConfig reducedMotion="user">
       <div className="stage">
         <motion.div
-          className={`island${expanded ? " open" : ""}${flash ? " flash" : ""}`}
+          className={`island is-${mode}${flash ? " flash" : ""}`}
           initial={false}
           animate={{
             width: size.width,
             height: size.height,
-            borderBottomLeftRadius: expanded ? 26 : 16,
-            borderBottomRightRadius: expanded ? 26 : 16,
+            borderBottomLeftRadius: size.radius,
+            borderBottomRightRadius: size.radius,
           }}
           transition={SPRING}
           onFocusCapture={(e) => {
@@ -106,9 +135,9 @@ export default function App() {
               <motion.div
                 key="full"
                 className="full"
-                initial={{ opacity: 0, filter: "blur(6px)" }}
-                animate={{ opacity: 1, filter: "blur(0px)", transition: { delay: 0.06, duration: 0.2 } }}
-                exit={{ opacity: 0, filter: "blur(6px)", transition: { duration: 0.1 } }}
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0, transition: { duration: 0.14 } }}
+                exit={{ opacity: 0, transition: { duration: 0.06 } }}
               >
                 <header className="tabs">
                   {TABS.map(({ id, title, Icon }) => (
@@ -145,7 +174,9 @@ export default function App() {
                 <main className="content">
                   {tab === "shelf" && <Shelf items={shelf} onError={showError} />}
                   {tab === "clipboard" && <Clipboard entries={texts} onError={showError} />}
-                  {tab === "translate" && <Translate incoming={incoming} providerName={providerName} />}
+                  {tab === "translate" && settings && (
+                    <Translate incoming={incoming} provider={settings.provider} providerName={providerName} />
+                  )}
                   {tab === "settings" && settings && snapshot && (
                     <SettingsPanel
                       settings={settings}
@@ -169,25 +200,24 @@ export default function App() {
                   )}
                 </AnimatePresence>
               </motion.div>
-            ) : (
+            ) : mode === "compact" ? (
               <motion.div
                 key="compact"
                 className="compact"
                 initial={{ opacity: 0 }}
-                animate={{ opacity: 1, transition: { delay: 0.08 } }}
-                exit={{ opacity: 0, transition: { duration: 0.08 } }}
+                animate={{ opacity: 1, transition: { delay: 0.05, duration: 0.12 } }}
+                exit={{ opacity: 0, transition: { duration: 0.05 } }}
               >
                 <span className={`count${flash === "shelf" ? " hot" : ""}`}>
                   <ImageIcon width={13} height={13} />
                   {shelf.length}
                 </span>
-                <span className="cam" />
                 <span className={`count${flash === "clipboard" ? " hot" : ""}`}>
                   <ClipIcon width={13} height={13} />
                   {texts.length}
                 </span>
               </motion.div>
-            )}
+            ) : null}
           </AnimatePresence>
         </motion.div>
       </div>

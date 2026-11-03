@@ -31,12 +31,15 @@ pub struct Settings {
     pub hide_in_fullscreen: bool,
     /// Capture images from the clipboard to the shelf.
     pub capture_images: bool,
+    /// Shrink the capsule to a thin strip after `idle_seconds` without activity.
+    pub idle_thin: bool,
+    pub idle_seconds: u64,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            provider: Provider::Google,
+            provider: Provider::Offline,
             deepl_key: String::new(),
             llm_url: "http://127.0.0.1:11434/v1/chat/completions".into(),
             llm_model: "qwen2.5:7b".into(),
@@ -48,6 +51,8 @@ impl Default for Settings {
             persist_text_history: false,
             hide_in_fullscreen: true,
             capture_images: true,
+            idle_thin: true,
+            idle_seconds: 4,
         }
     }
 }
@@ -57,6 +62,7 @@ impl Settings {
     pub fn sanitized(mut self) -> Self {
         self.shelf_limit = self.shelf_limit.clamp(1, 30);
         self.text_limit = self.text_limit.clamp(5, 100);
+        self.idle_seconds = self.idle_seconds.clamp(1, 600);
         self.hotkey = self.hotkey.trim().to_string();
         self.deepl_key = self.deepl_key.trim().to_string();
         self.llm_url = self.llm_url.trim().to_string();

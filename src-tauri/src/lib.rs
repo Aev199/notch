@@ -2,6 +2,7 @@
 //! screenshot shelf, clipboard history and a quick RU/EN translator.
 
 mod clip;
+mod models;
 mod net;
 mod overlay;
 mod state;
@@ -32,7 +33,7 @@ struct Snapshot {
     compact: (f64, f64),
     data_dir: String,
     autostart: bool,
-    expanded: bool,
+    mode: notch_core::hover::Mode,
 }
 
 fn exe_path() -> PathBuf {
@@ -56,7 +57,7 @@ fn snapshot(state: State<'_, Shared>) -> Snapshot {
         compact: (COMPACT_W, COMPACT_H),
         data_dir: state.data_dir.display().to_string(),
         autostart: autostart_enabled(),
-        expanded: lock(&state.hover).is_expanded(),
+        mode: lock(&state.hover).mode(),
     }
 }
 
@@ -80,7 +81,15 @@ fn open_island(app: AppHandle, tab: Option<String>) {
         Some("translate") => Some("translate"),
         _ => None,
     };
-    state::open_island(&app, tab, 4_000);
+    state::open_island(&app, tab, 4_000, false);
+}
+
+/// One part of an embedded offline model, gzip-compressed, as raw bytes.
+#[tauri::command]
+fn offline_model(pair: String, part: String) -> Result<tauri::ipc::Response, String> {
+    models::get(&pair, &part)
+        .map(|bytes| tauri::ipc::Response::new(bytes.to_vec()))
+        .ok_or_else(|| format!("нет модели {pair}/{part}"))
 }
 
 /// Puts a history entry back on the clipboard (and moves it to the top).
@@ -235,8 +244,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "open" => state::open_island(app, None, 4_000),
-            "translate" => clip::request_translation(app, clip::read_text().unwrap_or_default()),
+            "open" => state::open_island(app, None, 4_000, false),
+            "translate" => clip::request_translation(app, clip::read_text().unwrap_or_default(), true),
             "folder" => {
                 let dir = app.state::<Shared>().data_dir.clone();
                 let _ = open_in_explorer(&dir);
@@ -246,7 +255,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
-                state::open_island(tray.app_handle(), None, 4_000);
+                state::open_island(tray.app_handle(), None, 4_000, false);
             }
         });
     if let Some(icon) = app.default_window_icon() {
@@ -287,7 +296,7 @@ pub fn run() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
                     if event.state == ShortcutState::Pressed {
-                        clip::request_translation(app, clip::read_text().unwrap_or_default());
+                        clip::request_translation(app, clip::read_text().unwrap_or_default(), true);
                     }
                 })
                 .build(),
@@ -299,6 +308,7 @@ pub fn run() {
             set_island_size,
             close_island,
             open_island,
+            offline_model,
             copy_entry,
             copy_text,
             remove_entry,
@@ -324,7 +334,7 @@ pub fn run() {
                 shared.hwnd.store(hwnd.0 as isize, Ordering::Relaxed);
             }
             overlay::place_window(&handle);
-            win::ensure_tool_window(shared.hwnd());
+            win::apply_styles(shared.hwnd(), true);
 
             let hotkey = lock(&shared.settings).hotkey.clone();
             if let Err(e) = register_hotkey(&handle, &hotkey) {

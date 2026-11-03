@@ -1,6 +1,6 @@
 //! Shared application state and the helpers every module uses to change it.
 
-use notch_core::hover::{HoverMachine, Timing, Transition};
+use notch_core::hover::{HoverMachine, Mode, Timing, Transition};
 use notch_core::settings::{Settings, HISTORY_FILE};
 use notch_core::shelf::Shelf;
 use notch_core::text_history::{TextEntry, TextHistory};
@@ -19,6 +19,9 @@ pub const STAGE_H: f64 = 280.0;
 /// Logical size of the collapsed capsule (also its hitbox).
 pub const COMPACT_W: f64 = 180.0;
 pub const COMPACT_H: f64 = 32.0;
+/// Logical hitbox of the thin strip (the visible strip is a bit narrower).
+pub const STRIP_W: f64 = 180.0;
+pub const STRIP_H: f64 = 6.0;
 /// Default logical size of the open island until the UI reports its own.
 pub const EXPANDED_W: f64 = 520.0;
 pub const EXPANDED_H: f64 = 260.0;
@@ -53,9 +56,11 @@ pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[derive(Serialize, Clone)]
 pub struct IslandEvent {
-    pub expanded: bool,
+    pub mode: Mode,
     /// Tab to show when opening (`shelf`, `clipboard`, `translate`).
     pub tab: Option<&'static str>,
+    /// Put the caret into the translator field (hotkey).
+    pub focus: bool,
 }
 
 impl App {
@@ -115,35 +120,45 @@ pub fn emit_shelf(app: &AppHandle) {
     let _ = app.emit("shelf", items);
 }
 
-/// Tells the UI about an open/close decided by the hover machine or a command.
-pub fn announce(app: &AppHandle, transition: Transition, tab: Option<&'static str>) {
+/// Tells the UI about a mode change decided by the hover machine.
+pub fn announce(app: &AppHandle, transition: Transition) {
     let shared = app.state::<Shared>();
     if transition == Transition::Collapse && shared.input_mode.load(Ordering::Relaxed) {
         end_input(app, true);
     }
-    let expanded = transition == Transition::Expand;
-    let _ = app.emit("island", IslandEvent { expanded, tab });
+    let mode = lock(&shared.hover).mode();
+    let _ = app.emit("island", IslandEvent { mode, tab: None, focus: false });
 }
 
-/// Opens the island from code (hotkey, tray, double copy).
-pub fn open_island(app: &AppHandle, tab: Option<&'static str>, sticky_ms: u64) {
+/// Opens the island from code (hotkey, tray, double copy). With `focus` the
+/// translator field gets the keyboard right away.
+pub fn open_island(app: &AppHandle, tab: Option<&'static str>, sticky_ms: u64, focus: bool) {
     let shared = app.state::<Shared>();
     if shared.hidden_for_fullscreen.swap(false, Ordering::Relaxed) {
         win::show_no_activate(shared.hwnd(), true);
     }
     // Announce even if it was already open: the UI may need to switch tabs.
     let _ = lock(&shared.hover).open(now_ms(), sticky_ms);
-    let _ = app.emit("island", IslandEvent { expanded: true, tab });
+    if focus {
+        begin_input(app);
+    }
+    let _ = app.emit("island", IslandEvent { mode: Mode::Open, tab, focus });
 }
 
 pub fn close_island(app: &AppHandle) {
     let shared = app.state::<Shared>();
-    let t = lock(&shared.hover).close();
+    let t = lock(&shared.hover).close(now_ms());
     if let Some(t) = t {
-        announce(app, t, None);
+        announce(app, t);
     } else if shared.input_mode.load(Ordering::Relaxed) {
         end_input(app, true);
     }
+}
+
+/// New clip or screenshot: wake the strip up so the counter flash is visible.
+pub fn poke(app: &AppHandle) {
+    let shared = app.state::<Shared>();
+    lock(&shared.hover).poke(now_ms());
 }
 
 /// Lets the translator's text field take keyboard focus: the overlay becomes
@@ -159,7 +174,6 @@ pub fn begin_input(app: &AppHandle) {
     }
     lock(&shared.hover).set_input_lock(true);
     let _ = window.set_focusable(true);
-    win::ensure_tool_window(shared.hwnd());
     win::force_foreground(shared.hwnd());
     let _ = window.set_focus();
 }
@@ -175,7 +189,6 @@ pub fn end_input(app: &AppHandle, restore: bool) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.set_focusable(false);
     }
-    win::ensure_tool_window(shared.hwnd());
     let prev = shared.prev_foreground.swap(0, Ordering::Relaxed);
     if restore && prev != 0 {
         win::force_foreground(prev);

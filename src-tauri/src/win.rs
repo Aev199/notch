@@ -18,10 +18,12 @@ mod imp {
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         BringWindowToTop, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect,
-        GetWindowThreadProcessId, IsWindow, IsWindowVisible, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
-        ShowWindow, GWL_EXSTYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
-        SW_SHOWNOACTIVATE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+        GetClassNameW, GetWindowThreadProcessId, IsWindow, IsWindowVisible, SetForegroundWindow, SetWindowLongPtrW,
+        SetWindowPos, ShowWindow, GWL_EXSTYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
+        WS_EX_TRANSPARENT,
     };
+    use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTOPRIMARY};
 
     const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 
@@ -33,14 +35,22 @@ mod imp {
         raw as HWND
     }
 
-    /// Hides the window from Alt+Tab. Tauri recomputes extended styles on
-    /// every style change (click-through, focusable...), dropping bits it does
-    /// not know about, so this is called again after each such change.
-    pub fn ensure_tool_window(raw: isize) {
+    /// Keeps the extended styles we own in place: always a tool window (no
+    /// Alt+Tab), click-through (`WS_EX_TRANSPARENT | WS_EX_LAYERED`) on
+    /// demand. Tauri rewrites the whole extended style whenever it changes
+    /// something itself (focusable, focus...), so this runs on every overlay
+    /// tick and repairs any such rewrite within one tick. All writes come from
+    /// one thread, so there is no race between two writers any more.
+    pub fn apply_styles(raw: isize, click_through: bool) {
         unsafe {
             let h = hwnd(raw);
+            if h.is_null() {
+                return;
+            }
             let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
-            let want = (ex | WS_EX_TOOLWINDOW as isize) & !(WS_EX_APPWINDOW as isize);
+            let pass = (WS_EX_TRANSPARENT | WS_EX_LAYERED) as isize;
+            let mut want = (ex | WS_EX_TOOLWINDOW as isize) & !(WS_EX_APPWINDOW as isize);
+            want = if click_through { want | pass } else { want & !pass };
             if want != ex {
                 SetWindowLongPtrW(h, GWL_EXSTYLE, want);
                 SetWindowPos(
@@ -53,6 +63,36 @@ mod imp {
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
                 );
             }
+        }
+    }
+
+    /// The foreground window covers the whole monitor our window is on
+    /// (browser F11, borderless games and players, fullscreen video...).
+    /// The desktop and the taskbar do not count.
+    pub fn foreground_fills_monitor(ours: isize) -> bool {
+        unsafe {
+            let fg = GetForegroundWindow();
+            if fg.is_null() || fg as isize == ours {
+                return false;
+            }
+            let mut class = [0u16; 64];
+            let len = GetClassNameW(fg, class.as_mut_ptr(), class.len() as i32).max(0) as usize;
+            let class = String::from_utf16_lossy(&class[..len]);
+            if matches!(class.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd") {
+                return false;
+            }
+            let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+            if GetWindowRect(fg, &mut r) == 0 {
+                return false;
+            }
+            let monitor = MonitorFromWindow(hwnd(ours), MONITOR_DEFAULTTOPRIMARY);
+            let mut info: MONITORINFO = std::mem::zeroed();
+            info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+            if GetMonitorInfoW(monitor, &mut info) == 0 {
+                return false;
+            }
+            let m = info.rcMonitor;
+            r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom
         }
     }
 
@@ -78,13 +118,24 @@ mod imp {
         }
     }
 
-    /// A fullscreen game, video, presentation or "busy" app is in front.
-    pub fn fullscreen_app_active() -> bool {
+    fn notification_state() -> i32 {
         let mut state = 0;
         if unsafe { SHQueryUserNotificationState(&mut state) } < 0 {
-            return false;
+            return 0;
         }
-        matches!(state, QUNS_BUSY | QUNS_RUNNING_D3D_FULL_SCREEN | QUNS_PRESENTATION_MODE)
+        state
+    }
+
+    /// An exclusive-fullscreen Direct3D game or presentation mode: the island
+    /// is hidden completely.
+    pub fn exclusive_fullscreen_active() -> bool {
+        matches!(notification_state(), QUNS_RUNNING_D3D_FULL_SCREEN | QUNS_PRESENTATION_MODE)
+    }
+
+    /// Windows considers a fullscreen app "busy" (video, F11 browser...): the
+    /// island shrinks to a strip.
+    pub fn busy_fullscreen_active() -> bool {
+        notification_state() == QUNS_BUSY
     }
 
     pub fn is_visible(raw: isize) -> bool {
@@ -201,7 +252,10 @@ mod imp {
 #[cfg(not(windows))]
 #[allow(dead_code)]
 mod imp {
-    pub fn ensure_tool_window(_: isize) {}
+    pub fn apply_styles(_: isize, _: bool) {}
+    pub fn foreground_fills_monitor(_: isize) -> bool {
+        false
+    }
     pub fn cursor_pos() -> Option<(f64, f64)> {
         None
     }
@@ -211,7 +265,10 @@ mod imp {
     pub fn window_rect(_: isize) -> Option<(f64, f64, f64, f64, f64)> {
         None
     }
-    pub fn fullscreen_app_active() -> bool {
+    pub fn exclusive_fullscreen_active() -> bool {
+        false
+    }
+    pub fn busy_fullscreen_active() -> bool {
         false
     }
     pub fn is_visible(_: isize) -> bool {
