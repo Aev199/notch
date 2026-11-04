@@ -121,6 +121,7 @@ fn housekeeping(app: &AppHandle, shared: &Shared, hwnd: isize) -> bool {
     if !shared.hidden_for_fullscreen.load(Ordering::Relaxed) {
         // Follows resolution / DPI / primary-monitor changes.
         place_window(app);
+        win::keep_topmost(hwnd);
     }
     win::busy_fullscreen_active() || win::foreground_fills_monitor(hwnd)
 }

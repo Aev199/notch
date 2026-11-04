@@ -6,7 +6,7 @@ const base = (props: SVGProps<SVGSVGElement>) => ({
   viewBox: "0 0 24 24",
   fill: "none",
   stroke: "currentColor",
-  strokeWidth: 1.8,
+  strokeWidth: 1.6,
   strokeLinecap: "round" as const,
   strokeLinejoin: "round" as const,
   "aria-hidden": true,
@@ -28,12 +28,6 @@ export const ClipIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
-export const TranslateIcon = (p: SVGProps<SVGSVGElement>) => (
-  <svg {...base(p)}>
-    <path d="M4 5h9M8.5 3v2M6 5c.6 3.4 2.6 6 6 7.5M11 5c-.8 3.6-3.1 6.4-7 8" />
-    <path d="m12 21 4.5-10L21 21M13.5 18h6" />
-  </svg>
-);
 
 export const GearIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>
@@ -67,15 +61,30 @@ export const CheckIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
-export const SwapIcon = (p: SVGProps<SVGSVGElement>) => (
-  <svg {...base(p)}>
-    <path d="M5 9h13l-3.5-3.5M19 15H6l3.5 3.5" />
-  </svg>
-);
 
 export const PasteIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>
     <rect x="5" y="4" width="14" height="17" rx="2.5" />
     <path d="M9 4.5V3h6v1.5M12 10v6M9.5 13.5 12 16l2.5-2.5" />
+  </svg>
+);
+
+export const BackIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M15 5l-7 7 7 7" />
+  </svg>
+);
+
+export const UngroupIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <rect x="3" y="8" width="11" height="11" rx="2.5" />
+    <path d="M10 4h8.5A2.5 2.5 0 0 1 21 6.5V15M16 3l2 1-2 1.5" />
+  </svg>
+);
+
+/** Arrow into a text caret: "paste into the active field". */
+export const InsertIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M4 12h10M10 8l4 4-4 4M19 5v14" />
   </svg>
 );

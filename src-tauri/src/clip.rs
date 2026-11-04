@@ -3,6 +3,7 @@
 //! to the screenshot shelf.
 
 use clipboard_master::{CallbackResult, ClipboardHandler, Master};
+use notch_core::shelf;
 use notch_core::text_history::normalize;
 use std::io;
 use std::sync::atomic::Ordering;
@@ -58,14 +59,19 @@ impl Handler {
         }
         if let Ok(img) = clipboard.get_image() {
             let (w, h) = (img.width as u32, img.height as u32);
-            let added = lock(&shared.shelf).add_rgba(w, h, img.bytes.into_owned(), now);
+            let rgba = img.bytes.into_owned();
+            if lock(&shared.shelf).is_duplicate(shelf::fingerprint(w, h, &rgba)) {
+                return;
+            }
+            // PNG encoding takes a while on big screens: do it without the lock
+            // so the UI stays responsive.
+            let added = shelf::encode(w, h, rgba).and_then(|enc| lock(&shared.shelf).insert(enc, now));
             match added {
-                Ok(Some(_)) => {
+                Ok(_) => {
                     poke(&self.app);
                     emit_shelf(&self.app);
                     let _ = self.app.emit("captured", "shelf");
                 }
-                Ok(None) => {}
                 Err(e) => eprintln!("shelf: {e}"),
             }
         }
@@ -117,7 +123,7 @@ pub fn write_text(shared: &Shared, text: &str) -> Result<(), String> {
 }
 
 pub fn write_image(shared: &Shared, width: u32, height: u32, rgba: Vec<u8>) -> Result<(), String> {
-    lock(&shared.shelf).remember(notch_core::shelf::fingerprint(width, height, &rgba));
+    lock(&shared.shelf).remember(shelf::fingerprint(width, height, &rgba));
     shared.mute_clipboard(1500);
     let data = arboard::ImageData { width: width as usize, height: height as usize, bytes: rgba.into() };
     arboard::Clipboard::new().and_then(|mut c| c.set_image(data)).map_err(|e| e.to_string())

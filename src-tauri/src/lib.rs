@@ -20,7 +20,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Manager, State, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
-use state::{lock, App, Shared, COMPACT_H, COMPACT_W};
+use state::{lock, App, Shared};
 
 const AUTOSTART_NAME: &str = "Notch";
 
@@ -30,7 +30,6 @@ struct Snapshot {
     settings: Settings,
     texts: Vec<TextEntry>,
     shelf: Vec<ShelfItem>,
-    compact: (f64, f64),
     data_dir: String,
     autostart: bool,
     mode: notch_core::hover::Mode,
@@ -54,7 +53,6 @@ fn snapshot(state: State<'_, Shared>) -> Snapshot {
         settings: lock(&state.settings).clone(),
         texts: lock(&state.texts).entries().to_vec(),
         shelf: lock(&state.shelf).items().to_vec(),
-        compact: (COMPACT_W, COMPACT_H),
         data_dir: state.data_dir.display().to_string(),
         autostart: autostart_enabled(),
         mode: lock(&state.hover).mode(),
@@ -92,14 +90,23 @@ fn offline_model(pair: String, part: String) -> Result<tauri::ipc::Response, Str
         .ok_or_else(|| format!("нет модели {pair}/{part}"))
 }
 
-/// Puts a history entry back on the clipboard (and moves it to the top).
+/// Puts text on the clipboard and moves it to the top of the history.
+fn put_text(text: &str, app: &AppHandle, state: &Shared) -> Result<(), String> {
+    clip::write_text(state, text)?;
+    lock(&state.texts).push(text, state::now_ms());
+    state.persist_texts();
+    state::emit_texts(app);
+    Ok(())
+}
+
+fn entry_text(id: u64, state: &Shared) -> Result<String, String> {
+    lock(&state.texts).get(id).map(|e| e.text.clone()).ok_or_else(|| "запись не найдена".into())
+}
+
+/// Puts a history entry back on the clipboard; `close` folds the island.
 #[tauri::command]
 fn copy_entry(id: u64, close: bool, app: AppHandle, state: State<'_, Shared>) -> Result<(), String> {
-    let text = lock(&state.texts).get(id).map(|e| e.text.clone()).ok_or("запись не найдена")?;
-    clip::write_text(&state, &text)?;
-    lock(&state.texts).push(&text, state::now_ms());
-    state.persist_texts();
-    state::emit_texts(&app);
+    put_text(&entry_text(id, &state)?, &app, &state)?;
     if close {
         state::close_island(&app);
     }
@@ -109,11 +116,7 @@ fn copy_entry(id: u64, close: bool, app: AppHandle, state: State<'_, Shared>) ->
 /// Pastes a history entry straight into the field the user was typing in.
 #[tauri::command]
 fn paste_entry(id: u64, app: AppHandle, state: State<'_, Shared>) -> Result<(), String> {
-    let text = lock(&state.texts).get(id).map(|e| e.text.clone()).ok_or("запись не найдена")?;
-    clip::write_text(&state, &text)?;
-    lock(&state.texts).push(&text, state::now_ms());
-    state.persist_texts();
-    state::emit_texts(&app);
+    put_text(&entry_text(id, &state)?, &app, &state)?;
     state::paste_into_active(&app);
     Ok(())
 }
@@ -121,24 +124,15 @@ fn paste_entry(id: u64, app: AppHandle, state: State<'_, Shared>) -> Result<(), 
 /// Pastes arbitrary text (a translation) into the active field.
 #[tauri::command]
 fn paste_text(text: String, app: AppHandle, state: State<'_, Shared>) -> Result<(), String> {
-    clip::write_text(&state, &text)?;
-    if lock(&state.texts).push(&text, state::now_ms()) {
-        state.persist_texts();
-        state::emit_texts(&app);
-    }
+    put_text(&text, &app, &state)?;
     state::paste_into_active(&app);
     Ok(())
 }
 
-/// Copies arbitrary text (e.g. a translation) and records it in the history.
+/// Copies arbitrary text (a translation) and records it in the history.
 #[tauri::command]
 fn copy_text(text: String, app: AppHandle, state: State<'_, Shared>) -> Result<(), String> {
-    clip::write_text(&state, &text)?;
-    if lock(&state.texts).push(&text, state::now_ms()) {
-        state.persist_texts();
-        state::emit_texts(&app);
-    }
-    Ok(())
+    put_text(&text, &app, &state)
 }
 
 #[tauri::command]

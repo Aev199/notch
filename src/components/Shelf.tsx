@@ -1,9 +1,7 @@
-import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import { api, errorText, timeAgo, type ShelfItem } from "../lib/api";
-import { CheckIcon, CopyIcon, TrashIcon } from "./Icons";
-import { BackIcon, UngroupIcon } from "./Icons2";
+import { BackIcon, CheckIcon, CopyIcon, TrashIcon, UngroupIcon } from "./Icons";
 
 const DRAG_THRESHOLD = 5;
 /** Drop target meaning "take it out of the group". */
@@ -76,7 +74,10 @@ export function Shelf({ items, onError }: Props) {
   const all = useMemo(() => tilesOf(items), [items]);
   const groupItems = openGroup ? items.filter((i) => i.group === openGroup) : [];
   // The group vanished (emptied, deleted): back to the shelf.
-  if (openGroup && groupItems.length === 0) queueMicrotask(() => setOpenGroup(null));
+  const groupGone = openGroup !== null && groupItems.length === 0;
+  useEffect(() => {
+    if (groupGone) setOpenGroup(null);
+  }, [groupGone]);
   const tiles: Tile[] = openGroup ? groupItems.map((item) => ({ kind: "shot", key: item.id, item })) : all;
 
   const setDragState = (d: Drag | null) => {
@@ -155,11 +156,8 @@ export function Shelf({ items, onError }: Props) {
   if (items.length === 0) {
     return (
       <div className="empty">
-        <p>Полка пуста</p>
-        <span>
-          Сделайте скриншот в буфер (Win+Shift+S или PrtScr) — он появится здесь. Его можно вытащить в любое окно,
-          а перетащив на другой скриншот — собрать группу.
-        </span>
+        <p>Здесь будут скриншоты из буфера</p>
+        <span>Win+Shift+S или PrtScr. Тащите за край — в другое окно, на другой скриншот — в группу.</span>
       </div>
     );
   }
@@ -178,7 +176,7 @@ export function Shelf({ items, onError }: Props) {
       {openGroup && (
         <div className="group-bar">
           <button
-            className={`btn ghost back${drag?.over === OUT ? " drop-hot" : ""}`}
+            className={`btn back${drag?.over === OUT ? " drop-hot" : ""}`}
             data-drop={drag ? OUT : undefined}
             onClick={() => setOpenGroup(null)}
             title={drag ? "Отпустите здесь, чтобы вынуть из группы" : "Назад к полке"}
@@ -187,11 +185,11 @@ export function Shelf({ items, onError }: Props) {
             {drag ? "Вынуть из группы" : "Полка"}
           </button>
           <span className="dim">
-            Группа · {groupItems.length} шт. · {timeAgo(groupItems[0]?.created_at ?? Date.now())}
+            {groupItems.length} шт. · {timeAgo(groupItems[0]?.created_at ?? Date.now())}
           </span>
           <span className="push" />
           <button
-            className="btn ghost"
+            className="btn grab"
             title="Вытащить всю группу в окно или папку"
             onPointerDown={(e) => {
               if (e.button !== 0) return;
@@ -199,93 +197,83 @@ export function Shelf({ items, onError }: Props) {
               press.current = { tile, x: e.clientX, y: e.clientY, pointer: e.pointerId };
             }}
           >
-            ⠿ Тащить все
+            Тащить все
           </button>
-          <button className="btn ghost danger" onClick={() => void api.shelfRemoveGroup(openGroup)}>
+          <button className="btn danger" onClick={() => void api.shelfRemoveGroup(openGroup)}>
             Удалить группу
           </button>
         </div>
       )}
       <div className="shelf-grid" key={openGroup ?? "all"}>
-        <AnimatePresence initial={false}>
-          {tiles.map((tile) => {
-            const first = tile.kind === "shot" ? tile.item : tile.items[0];
-            const hot = drag?.over === tile.key;
-            const lifted = drag?.key === tile.key;
-            return (
-              <motion.figure
-                key={tile.key}
-                layout
-                className={`tile${tile.kind === "group" ? " group" : ""}${hot ? " drop-hot" : ""}${lifted ? " lifted" : ""}`}
-                data-drop={tile.key}
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: lifted ? 0.35 : 1, scale: hot ? 1.04 : 1 }}
-                exit={{ opacity: 0, scale: 0.85 }}
-                transition={{ type: "spring", stiffness: 500, damping: 34 }}
-                title={
-                  tile.kind === "group"
-                    ? `Группа из ${tile.items.length} — клик откроет, перетаскивание вынесет все файлы`
-                    : `${first.width}×${first.height} — перетащите в окно или на другой скриншот`
-                }
-                onPointerDown={(e) => onPointerDown(e, tile)}
-              >
-                {tile.kind === "group" ? (
-                  <div className="stack">
-                    {tile.items.slice(0, 3).reverse().map((it, i, arr) => (
-                      <img key={it.id} src={it.thumb} alt="" draggable={false} style={{ "--i": arr.length - 1 - i } as never} />
-                    ))}
-                    <em className="badge">{tile.items.length}</em>
-                  </div>
-                ) : (
-                  <img src={first.thumb} alt="" draggable={false} />
+        {tiles.map((tile) => {
+          const first = tile.kind === "shot" ? tile.item : tile.items[0];
+          const hot = drag?.over === tile.key;
+          const lifted = drag?.key === tile.key;
+          return (
+            <figure
+              key={tile.key}
+              className={`tile${tile.kind === "group" ? " group" : ""}${hot ? " drop-hot" : ""}${lifted ? " lifted" : ""}`}
+              data-drop={tile.key}
+              title={
+                tile.kind === "group"
+                  ? `Группа из ${tile.items.length}: клик — открыть, за край — вынести все файлы`
+                  : `${first.width}×${first.height}: за край — в другое окно, на скриншот — в группу`
+              }
+              onPointerDown={(e) => onPointerDown(e, tile)}
+            >
+              {tile.kind === "group" ? (
+                <div className={`mosaic n${Math.min(tile.items.length, 4)}`}>
+                  {tile.items.slice(0, 4).map((it) => (
+                    <img key={it.id} src={it.thumb} alt="" draggable={false} />
+                  ))}
+                </div>
+              ) : (
+                <img className="thumb" src={first.thumb} alt="" draggable={false} />
+              )}
+              <figcaption>
+                <span>{tile.kind === "group" ? `Группа · ${tile.items.length}` : timeAgo(first.created_at)}</span>
+                {tile.kind === "shot" && (
+                  <span className="dim">
+                    {first.width}×{first.height}
+                  </span>
                 )}
-                <figcaption>
-                  <span>{tile.kind === "group" ? `Группа · ${tile.items.length}` : timeAgo(first.created_at)}</span>
-                  {tile.kind === "shot" && (
-                    <span className="dim">
-                      {first.width}×{first.height}
-                    </span>
-                  )}
-                </figcaption>
-                <div className="tile-actions">
-                  {tile.kind === "shot" ? (
-                    <>
-                      <button className="icon-btn small" title="Копировать" onClick={() => void copy(first)}>
-                        {copied === first.id ? <CheckIcon width={13} height={13} /> : <CopyIcon width={13} height={13} />}
+              </figcaption>
+              <div className="tile-actions">
+                {tile.kind === "shot" ? (
+                  <>
+                    <button className="icon-btn small" title="Копировать" onClick={() => void copy(first)}>
+                      {copied === first.id ? <CheckIcon width={13} height={13} /> : <CopyIcon width={13} height={13} />}
+                    </button>
+                    {openGroup && (
+                      <button className="icon-btn small" title="Вынуть из группы" onClick={() => void api.shelfUngroup(first.id)}>
+                        <UngroupIcon width={13} height={13} />
                       </button>
-                      {openGroup && (
-                        <button className="icon-btn small" title="Вынуть из группы" onClick={() => void api.shelfUngroup(first.id)}>
-                          <UngroupIcon width={13} height={13} />
-                        </button>
-                      )}
-                      <button
-                        className="icon-btn small danger"
-                        title="Удалить"
-                        onClick={() => void api.shelfRemove(first.id).catch((e) => onError(errorText(e)))}
-                      >
-                        <TrashIcon width={13} height={13} />
-                      </button>
-                    </>
-                  ) : (
+                    )}
                     <button
                       className="icon-btn small danger"
-                      title="Удалить группу"
-                      onClick={() => void api.shelfRemoveGroup(tile.key)}
+                      title="Удалить"
+                      onClick={() => void api.shelfRemove(first.id).catch((e) => onError(errorText(e)))}
                     >
                       <TrashIcon width={13} height={13} />
                     </button>
-                  )}
-                </div>
-              </motion.figure>
-            );
-          })}
-        </AnimatePresence>
+                  </>
+                ) : (
+                  <button className="icon-btn small danger" title="Удалить группу" onClick={() => void api.shelfRemoveGroup(tile.key)}>
+                    <TrashIcon width={13} height={13} />
+                  </button>
+                )}
+              </div>
+            </figure>
+          );
+        })}
       </div>
       {drag && (
         <div className="drag-ghost" style={{ left: drag.x, top: drag.y }}>
           <img src={drag.thumb} alt="" />
-          {drag.count > 1 && <em className="badge">{drag.count}</em>}
-          <span>{drag.over ? (drag.over === OUT ? "вынуть из группы" : "в группу") : "к краю — в другое окно"}</span>
+          <span>
+            {drag.count > 1 ? `${drag.count} · ` : ""}
+            {drag.over ? (drag.over === OUT ? "вынуть из группы" : "в группу") : "за край — в другое окно"}
+          </span>
         </div>
       )}
     </div>

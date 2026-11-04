@@ -1,10 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { motion, AnimatePresence } from "motion/react";
 import { api, direction, errorText, type Provider, type Translation } from "../lib/api";
 import { translate } from "../lib/translate";
 import { isSuperseded } from "../lib/offline";
-import { CheckIcon, CopyIcon, PasteIcon } from "./Icons";
-import { InsertIcon } from "./Icons2";
+import { CheckIcon, CopyIcon, InsertIcon, PasteIcon } from "./Icons";
 
 export interface Incoming {
   text: string;
@@ -65,17 +63,19 @@ export function Translate({ incoming, provider, providerName }: Props) {
   useLayoutEffect(() => {
     if (!incoming || incoming.seq === memory.handledSeq) return;
     memory.handledSeq = incoming.seq;
-    setSource(incoming.text);
+    // An empty clipboard (hotkey) keeps whatever was in the field.
+    const text = incoming.text.trim() ? incoming.text : source;
+    if (text !== source) setSource(text);
     if (incoming.focus) {
       const el = field.current;
       if (el) {
-        el.value = incoming.text;
+        el.value = text;
         el.focus();
         // Everything selected: typing replaces the text, arrows keep it.
         el.select();
       }
     }
-    void run(incoming.text);
+    if (text !== source || !result) void run(text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incoming?.seq]);
 
@@ -119,7 +119,7 @@ export function Translate({ incoming, provider, providerName }: Props) {
         <textarea
           ref={field}
           value={source}
-          placeholder="Введите текст или нажмите Ctrl+C дважды в любой программе"
+          placeholder="Текст. Или Ctrl+C дважды в любой программе"
           spellCheck={false}
           onChange={(e) => onType(e.target.value)}
           onKeyDown={(e) => {
@@ -151,20 +151,13 @@ export function Translate({ incoming, provider, providerName }: Props) {
             {copied ? <CheckIcon width={14} height={14} /> : <CopyIcon width={14} height={14} />}
           </button>
         </div>
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={error ? "e" : result?.text ?? "none"}
-            className={`result-text${error ? " error" : ""}${result ? " clickable" : ""}`}
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.12 }}
-            title={result ? "Клик — скопировать" : undefined}
-            onClick={() => void copy()}
-          >
-            {error ?? result?.text ?? <span className="dim">Здесь появится перевод</span>}
-          </motion.div>
-        </AnimatePresence>
+        <div
+          className={`result-text${error ? " error" : ""}${result ? " clickable" : ""}`}
+          title={result ? "Клик — скопировать" : undefined}
+          onClick={() => void copy()}
+        >
+          {error ?? result?.text ?? <span className="dim">Перевод</span>}
+        </div>
       </div>
     </div>
   );

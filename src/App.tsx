@@ -13,29 +13,30 @@ import {
   type TranslateRequest,
 } from "./lib/api";
 import { translateOffline } from "./lib/offline";
+import { useMinuteTick } from "./lib/time";
 import { Shelf } from "./components/Shelf";
 import { Clipboard } from "./components/Clipboard";
 import { Translate, type Incoming } from "./components/Translate";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { ClipIcon, CloseIcon, GearIcon, ImageIcon, TranslateIcon } from "./components/Icons";
+import { ClipIcon, CloseIcon, GearIcon, ImageIcon } from "./components/Icons";
 
-/** Logical sizes; compact and expanded must match the backend hitboxes. */
+/** Logical sizes; compact and open must match the backend hitboxes. */
 const SIZES: Record<Mode, { width: number; height: number; radius: number }> = {
-  thin: { width: 140, height: 5, radius: 3 },
-  compact: { width: 180, height: 32, radius: 16 },
-  open: { width: 520, height: 252, radius: 26 },
+  thin: { width: 140, height: 4, radius: 2 },
+  compact: { width: 180, height: 32, radius: 12 },
+  open: { width: 520, height: 252, radius: 16 },
 };
 
-// Stiff spring: the island reaches its size in ~0.2 s with a hint of overshoot.
-const SPRING = { type: "spring" as const, stiffness: 560, damping: 38, mass: 0.75 };
+/** Plain ease-out, no overshoot. */
+const RESIZE = { type: "tween" as const, ease: [0.2, 0.8, 0.2, 1] as const, duration: 0.18 };
 
-const TABS: { id: Exclude<Tab, "settings">; title: string; Icon: typeof ImageIcon }[] = [
-  { id: "shelf", title: "Полка", Icon: ImageIcon },
-  { id: "clipboard", title: "Буфер", Icon: ClipIcon },
-  { id: "translate", title: "Перевод", Icon: TranslateIcon },
+const TABS: { id: Exclude<Tab, "settings">; title: string }[] = [
+  { id: "shelf", title: "Полка" },
+  { id: "clipboard", title: "Буфер" },
+  { id: "translate", title: "Перевод" },
 ];
 
-const PROVIDER_NAMES = { offline: "офлайн", google: "Google", deepl: "DeepL", llm: "Локальная модель" } as const;
+const PROVIDER_NAMES = { offline: "офлайн", google: "Google", deepl: "DeepL", llm: "локальная модель" } as const;
 
 export default function App() {
   const [mode, setMode] = useState<Mode>("compact");
@@ -50,6 +51,8 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const flashTimer = useRef<number>();
   const toastTimer = useRef<number>();
+  // Re-render once a minute so "5 мин" labels stay true while open.
+  useMinuteTick(mode === "open");
 
   useEffect(() => {
     void api.setIslandSize(SIZES.open.width, SIZES.open.height);
@@ -102,15 +105,15 @@ export default function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), 3500);
   };
 
-  const expanded = mode === "open";
   const size = SIZES[mode];
   const providerName = settings ? PROVIDER_NAMES[settings.provider] : "";
+  const counts: Record<string, number> = { shelf: shelf.length, clipboard: texts.length };
 
   return (
     <MotionConfig reducedMotion="user">
       <div className="stage">
         <motion.div
-          className={`island is-${mode}${flash ? " flash" : ""}`}
+          className={`island is-${mode}`}
           initial={false}
           animate={{
             width: size.width,
@@ -118,7 +121,7 @@ export default function App() {
             borderBottomLeftRadius: size.radius,
             borderBottomRightRadius: size.radius,
           }}
-          transition={SPRING}
+          transition={RESIZE}
           onFocusCapture={(e) => {
             const el = e.target as HTMLElement;
             if (el.matches("input, textarea, select")) void api.beginInput();
@@ -130,37 +133,30 @@ export default function App() {
             }
           }}
         >
-          <AnimatePresence initial={false} mode="popLayout">
-            {expanded ? (
+          <AnimatePresence initial={false}>
+            {mode === "open" && (
               <motion.div
                 key="full"
                 className="full"
-                initial={{ opacity: 0, y: -6 }}
-                animate={{ opacity: 1, y: 0, transition: { duration: 0.14 } }}
-                exit={{ opacity: 0, transition: { duration: 0.06 } }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1, transition: { duration: 0.12, delay: 0.04 } }}
+                exit={{ opacity: 0, transition: { duration: 0.05 } }}
               >
                 <header className="tabs">
-                  {TABS.map(({ id, title, Icon }) => (
+                  {TABS.map(({ id, title }) => (
                     <button key={id} className={`tab${tab === id ? " active" : ""}`} onClick={() => setTab(id)}>
-                      {tab === id && <motion.span layoutId="tab-pill" className="tab-pill" transition={SPRING} />}
-                      <Icon width={15} height={15} />
-                      <span>{title}</span>
-                      {id === "shelf" && shelf.length > 0 && <em>{shelf.length}</em>}
-                      {id === "clipboard" && texts.length > 0 && <em>{texts.length}</em>}
+                      {title}
+                      {counts[id] > 0 && <span className="tab-count">{counts[id]}</span>}
                     </button>
                   ))}
                   <span className="push" />
                   {tab === "shelf" && shelf.some((i) => !i.group) && (
-                    <button
-                      className="btn ghost"
-                      title="Удалить скриншоты вне групп (группы останутся)"
-                      onClick={() => void api.shelfClear()}
-                    >
+                    <button className="btn" title="Удалить скриншоты вне групп" onClick={() => void api.shelfClear()}>
                       Очистить
                     </button>
                   )}
                   {tab === "clipboard" && texts.length > 0 && (
-                    <button className="btn ghost" onClick={() => void api.clearEntries()}>
+                    <button className="btn" onClick={() => void api.clearEntries()}>
                       Очистить
                     </button>
                   )}
@@ -191,25 +187,15 @@ export default function App() {
                     />
                   )}
                 </main>
-                <AnimatePresence>
-                  {toast && (
-                    <motion.div
-                      className="toast"
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: 8 }}
-                    >
-                      {toast}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                {toast && <div className="toast">{toast}</div>}
               </motion.div>
-            ) : mode === "compact" ? (
+            )}
+            {mode === "compact" && (
               <motion.div
                 key="compact"
                 className="compact"
                 initial={{ opacity: 0 }}
-                animate={{ opacity: 1, transition: { delay: 0.05, duration: 0.12 } }}
+                animate={{ opacity: 1, transition: { duration: 0.1, delay: 0.05 } }}
                 exit={{ opacity: 0, transition: { duration: 0.05 } }}
               >
                 <span className={`count${flash === "shelf" ? " hot" : ""}`}>
@@ -221,7 +207,7 @@ export default function App() {
                   {texts.length}
                 </span>
               </motion.div>
-            ) : null}
+            )}
           </AnimatePresence>
         </motion.div>
       </div>

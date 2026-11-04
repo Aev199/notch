@@ -23,7 +23,7 @@ mod imp {
         BringWindowToTop, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect,
         GetClassNameW, GetWindowThreadProcessId, IsWindow, IsWindowVisible, SetForegroundWindow, SetWindowLongPtrW,
         SetWindowPos, ShowWindow, GWL_EXSTYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
+        SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE, HWND_TOPMOST, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
         WS_EX_TRANSPARENT,
     };
     use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTOPRIMARY};
@@ -139,6 +139,14 @@ mod imp {
     /// island shrinks to a strip.
     pub fn busy_fullscreen_active() -> bool {
         notification_state() == QUNS_BUSY
+    }
+
+    /// Puts the window back at the top of the topmost band: fullscreen
+    /// players and other overlays push themselves above it.
+    pub fn keep_topmost(raw: isize) {
+        unsafe {
+            SetWindowPos(hwnd(raw), HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
     }
 
     pub fn is_visible(raw: isize) -> bool {
@@ -302,6 +310,7 @@ mod imp {
     pub fn busy_fullscreen_active() -> bool {
         false
     }
+    pub fn keep_topmost(_: isize) {}
     pub fn is_visible(_: isize) -> bool {
         true
     }

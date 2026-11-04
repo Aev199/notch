@@ -60,6 +60,32 @@ pub fn fingerprint(width: u32, height: u32, rgba: &[u8]) -> u64 {
     hasher.finish()
 }
 
+/// A clipboard image turned into PNG bytes (full size and thumbnail).
+#[derive(Debug)]
+pub struct Encoded {
+    pub hash: u64,
+    pub width: u32,
+    pub height: u32,
+    png: Vec<u8>,
+    thumb: Vec<u8>,
+}
+
+/// PNG-encodes raw RGBA. Slow for big screenshots (hundreds of ms on 4K),
+/// so it does not need — and must not hold — the shelf lock.
+pub fn encode(width: u32, height: u32, rgba: Vec<u8>) -> Result<Encoded, String> {
+    let hash = fingerprint(width, height, &rgba);
+    let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> =
+        ImageBuffer::from_raw(width, height, rgba).ok_or("размер изображения не совпадает с данными")?;
+    let mut png = Vec::new();
+    buffer.write_to(&mut Cursor::new(&mut png), ImageFormat::Png).map_err(|e| e.to_string())?;
+    let img = image::DynamicImage::ImageRgba8(buffer);
+    let thumb_img =
+        if width <= THUMB_SIZE && height <= THUMB_SIZE { img } else { img.resize(THUMB_SIZE, THUMB_SIZE, FilterType::Triangle) };
+    let mut thumb = Vec::new();
+    thumb_img.write_to(&mut Cursor::new(&mut thumb), ImageFormat::Png).map_err(|e| e.to_string())?;
+    Ok(Encoded { hash, width, height, png, thumb })
+}
+
 fn data_url(png: &[u8]) -> String {
     format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png))
 }
@@ -243,15 +269,25 @@ impl Shelf {
         })
     }
 
+    /// The same pixels were the last image seen (e.g. our own copy-back).
+    pub fn is_duplicate(&self, hash: u64) -> bool {
+        self.last_hash == Some(hash)
+    }
+
     /// Saves a clipboard image (raw RGBA) to the shelf. Returns `Ok(None)`
-    /// when the same image was the last one seen.
+    /// when the same image was the last one seen. Convenience wrapper; the
+    /// app encodes with [`encode`] outside its lock and calls [`Shelf::insert`].
     pub fn add_rgba(&mut self, width: u32, height: u32, rgba: Vec<u8>, now_ms: u64) -> Result<Option<ShelfItem>, String> {
         let hash = fingerprint(width, height, &rgba);
-        if self.last_hash == Some(hash) {
+        if self.is_duplicate(hash) {
             return Ok(None);
         }
-        let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> =
-            ImageBuffer::from_raw(width, height, rgba).ok_or("размер изображения не совпадает с данными")?;
+        let encoded = encode(width, height, rgba)?;
+        self.insert(encoded, now_ms).map(Some)
+    }
+
+    /// Writes an encoded screenshot to disk and puts it on top of the shelf.
+    pub fn insert(&mut self, enc: Encoded, now_ms: u64) -> Result<ShelfItem, String> {
         let mut stem = format!("{PREFIX}{now_ms:013}");
         let mut n = 1;
         while self.paths(&stem).0.exists() {
@@ -259,30 +295,22 @@ impl Shelf {
             n += 1;
         }
         let (full, thumb_path) = self.paths(&stem);
-        buffer.save_with_format(&full, ImageFormat::Png).map_err(|e| e.to_string())?;
-        let img = image::DynamicImage::ImageRgba8(buffer);
-        let thumb = if width <= THUMB_SIZE && height <= THUMB_SIZE {
-            img
-        } else {
-            img.resize(THUMB_SIZE, THUMB_SIZE, FilterType::Triangle)
-        };
-        let mut thumb_png = Vec::new();
-        thumb.write_to(&mut Cursor::new(&mut thumb_png), ImageFormat::Png).map_err(|e| e.to_string())?;
-        fs::write(&thumb_path, &thumb_png).map_err(|e| e.to_string())?;
-        self.last_hash = Some(hash);
+        fs::write(&full, &enc.png).map_err(|e| e.to_string())?;
+        fs::write(&thumb_path, &enc.thumb).map_err(|e| e.to_string())?;
+        self.last_hash = Some(enc.hash);
         let item = ShelfItem {
             id: stem,
             path: full.to_string_lossy().to_string(),
             thumb_path: thumb_path.to_string_lossy().to_string(),
-            thumb: data_url(&thumb_png),
-            width,
-            height,
+            thumb: data_url(&enc.thumb),
+            width: enc.width,
+            height: enc.height,
             created_at: now_ms,
             group: None,
         };
         self.items.insert(0, item.clone());
         self.enforce_limit();
-        Ok(Some(item))
+        Ok(item)
     }
 
     /// Reads a stored screenshot back as RGBA (for copying it to the clipboard).
