@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { api, errorText, on } from "../lib/api";
+import { api, direction, errorText, on, type Provider, type Translation } from "../lib/api";
+import { translate } from "../lib/translate";
+import { isSuperseded } from "../lib/offline";
 import { COLORS, box, cropOf, fontPx, render, unitOf, type Box, type Pt, type Shape, type Size } from "./draw";
 import { ToolIcon } from "./icons";
+import { CloseIcon } from "../components/Icons";
 
 export type Tool = "pen" | "marker" | "arrow" | "rect" | "text" | "step" | "blur" | "crop";
 
@@ -24,6 +27,8 @@ const SIZES: { id: Size; title: string }[] = [
   { id: 2, title: "Толсто" },
 ];
 
+type Job<T> = { state: "idle" } | { state: "busy" } | { state: "done"; value: T } | { state: "error"; message: string };
+
 interface TextDraft {
   at: Pt;
   value: string;
@@ -40,6 +45,15 @@ export function Editor({ initialId }: { initialId: string }) {
   const [text, setText] = useState<TextDraft | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Side panel: text found on the picture and its translation.
+  const [panel, setPanel] = useState(false);
+  const [ocrText, setOcrText] = useState("");
+  const [ocr, setOcr] = useState<Job<null>>({ state: "idle" });
+  const [tr, setTr] = useState<Job<Translation>>({ state: "idle" });
+  const [provider, setProvider] = useState<Provider>("offline");
+  const ocrCrop = useRef<string>("");
+  const trSeq = useRef(0);
+  const trTimer = useRef<number>();
 
   const canvas = useRef<HTMLCanvasElement>(null);
   const textField = useRef<HTMLTextAreaElement>(null);
@@ -61,9 +75,17 @@ export function Editor({ initialId }: { initialId: string }) {
       setRedo([]);
       setText(null);
       setId(shotId);
+      setPanel(false);
+      setOcr({ state: "idle" });
+      setTr({ state: "idle" });
+      setOcrText("");
     } catch (e) {
       setStatus(errorText(e));
     }
+  }, []);
+
+  useEffect(() => {
+    void api.snapshot().then((snap) => setProvider(snap.settings.provider)).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -194,10 +216,11 @@ export function Editor({ initialId }: { initialId: string }) {
     });
   };
 
-  const exportPng = async (): Promise<Uint8Array> => {
+  /** PNG of the current crop; `bare` leaves the annotations out (for OCR). */
+  const exportPng = async (bare = false): Promise<Uint8Array> => {
     if (!img) throw new Error("картинка не загружена");
     const out = document.createElement("canvas");
-    render(out, img, shapes, null);
+    render(out, img, bare ? shapes.filter((x) => x.t === "crop") : shapes, null);
     const blob = await new Promise<Blob | null>((ok) => out.toBlob(ok, "image/png"));
     if (!blob) throw new Error("не удалось собрать PNG");
     return new Uint8Array(await blob.arrayBuffer());
@@ -222,10 +245,87 @@ export function Editor({ initialId }: { initialId: string }) {
     }
   };
 
+  // ---- text & translation ------------------------------------------------
+  const cropKey = () => {
+    const c = img ? cropOf(shapes, img.width, img.height) : null;
+    return c ? `${c.x},${c.y},${c.w},${c.h}` : "";
+  };
+
+  const runTranslate = async (source: string) => {
+    window.clearTimeout(trTimer.current);
+    if (!source.trim()) {
+      setTr({ state: "idle" });
+      return;
+    }
+    const seq = ++trSeq.current;
+    setTr({ state: "busy" });
+    try {
+      const value = await translate(source.trim(), provider);
+      if (seq === trSeq.current) setTr({ state: "done", value });
+    } catch (e) {
+      if (seq === trSeq.current && !isSuperseded(e)) setTr({ state: "error", message: errorText(e) });
+    }
+  };
+
+  /** Reads the text in the current crop (whole picture without a crop). */
+  const recognize = async (): Promise<string | null> => {
+    setPanel(true);
+    setOcr({ state: "busy" });
+    try {
+      const { text: found } = await api.ocrPng(await exportPng(true));
+      ocrCrop.current = cropKey();
+      setOcrText(found);
+      setOcr({ state: "done", value: null });
+      return found;
+    } catch (e) {
+      setOcr({ state: "error", message: errorText(e) });
+      return null;
+    }
+  };
+
+  const showText = () => {
+    if (panel && ocr.state !== "busy") {
+      setPanel(false);
+      return;
+    }
+    if (ocr.state !== "done" || ocrCrop.current !== cropKey()) void recognize();
+    else setPanel(true);
+  };
+
+  const translateImage = async () => {
+    setPanel(true);
+    const fresh = ocr.state === "done" && ocrCrop.current === cropKey();
+    const source = fresh ? ocrText : await recognize();
+    if (source) void runTranslate(source);
+  };
+
+  const onOcrEdit = (value: string) => {
+    setOcrText(value);
+    // Keep the translation in step with hand corrections.
+    if (tr.state !== "idle") {
+      window.clearTimeout(trTimer.current);
+      trTimer.current = window.setTimeout(() => void runTranslate(value), 600);
+    }
+  };
+
+  const copyText = async (value: string) => {
+    try {
+      await api.copyText(value);
+      setStatus("Текст скопирован");
+      window.setTimeout(() => setStatus(null), 1500);
+    } catch (e) {
+      setStatus(errorText(e));
+    }
+  };
+
+  const stale = ocr.state === "done" && ocrCrop.current !== cropKey();
+  const [from, to] = tr.state === "done" ? [tr.value.from, tr.value.to] : direction(ocrText);
+
   // ---- keyboard ----------------------------------------------------------
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (text) return; // the text field handles its own keys
+      // Text fields (annotation text, recognised text) handle their own keys.
+      if (text || (e.target as HTMLElement).matches?.("textarea, input")) return;
       const ctrl = e.ctrlKey || e.metaKey;
       if (ctrl && e.code === "KeyZ") {
         e.preventDefault();
@@ -321,6 +421,20 @@ export function Editor({ initialId }: { initialId: string }) {
             <ToolIcon tool="redo" />
           </button>
         </div>
+        <span className="ed-sep" />
+        <div className="ed-group">
+          <button
+            className={`btn${panel ? " on" : ""}`}
+            disabled={!img || ocr.state === "busy"}
+            onClick={showText}
+            title="Распознать текст в рамке обрезки или на всей картинке (офлайн)"
+          >
+            Текст
+          </button>
+          <button className="btn" disabled={!img || ocr.state === "busy"} onClick={() => void translateImage()} title="Распознать и перевести">
+            Перевести
+          </button>
+        </div>
         <span className="push" />
         {status && <span className="ed-status">{status}</span>}
         {cropBox && img && (cropBox.w !== img.width || cropBox.h !== img.height) && (
@@ -335,6 +449,7 @@ export function Editor({ initialId }: { initialId: string }) {
           Сохранить
         </button>
       </header>
+      <div className="ed-body">
       <main className="ed-stage">
         <canvas
           ref={canvas}
@@ -368,6 +483,62 @@ export function Editor({ initialId }: { initialId: string }) {
           />
         )}
       </main>
+      {panel && (
+        <aside className="ed-panel">
+          <section className="ed-panel-part">
+            <div className="ed-panel-head">
+              <span>Текст на картинке</span>
+              {ocr.state === "busy" && <span className="spinner" />}
+              {stale && (
+                <button className="btn" onClick={() => void recognize()} title="Рамка обрезки изменилась">
+                  Распознать заново
+                </button>
+              )}
+              <span className="push" />
+              <button className="icon-btn small" title="Скрыть" onClick={() => setPanel(false)}>
+                <CloseIcon width={13} height={13} />
+              </button>
+            </div>
+            {ocr.state === "error" ? (
+              <p className="error">{ocr.message}</p>
+            ) : (
+              <textarea
+                className="ed-ocr"
+                value={ocrText}
+                placeholder={ocr.state === "busy" ? "Распознаю…" : "Текст не найден"}
+                spellCheck={false}
+                onChange={(e) => onOcrEdit(e.target.value)}
+              />
+            )}
+            <div className="ed-panel-actions">
+              <button className="btn" disabled={!ocrText.trim()} onClick={() => void copyText(ocrText)}>
+                Копировать
+              </button>
+              <button className="btn" disabled={!ocrText.trim() || tr.state === "busy"} onClick={() => void runTranslate(ocrText)}>
+                Перевести
+              </button>
+            </div>
+          </section>
+          {tr.state !== "idle" && (
+            <section className="ed-panel-part">
+              <div className="ed-panel-head">
+                <span>
+                  {from.toUpperCase()} → {to.toUpperCase()}
+                </span>
+                {tr.state === "busy" && <span className="spinner" />}
+              </div>
+              {tr.state === "error" && <p className="error">{tr.message}</p>}
+              {tr.state === "done" && <div className="ed-translation">{tr.value.text}</div>}
+              <div className="ed-panel-actions">
+                <button className="btn" disabled={tr.state !== "done"} onClick={() => tr.state === "done" && void copyText(tr.value.text)}>
+                  Копировать перевод
+                </button>
+              </div>
+            </section>
+          )}
+        </aside>
+      )}
+      </div>
     </div>
   );
 }

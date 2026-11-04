@@ -170,11 +170,24 @@ fn shelf_image(id: String, state: State<'_, Shared>) -> Result<tauri::ipc::Respo
     std::fs::read(&path).map(tauri::ipc::Response::new).map_err(|e| e.to_string())
 }
 
-/// Opens a screenshot in the default image viewer.
 #[tauri::command]
-fn shelf_open(id: String, state: State<'_, Shared>) -> Result<(), String> {
-    let path = lock(&state.shelf).get(&id).map(|i| i.path.clone()).ok_or("скриншот не найден")?;
-    open_in_explorer(std::path::Path::new(&path))
+async fn ocr_png(request: tauri::ipc::Request<'_>) -> Result<ocr::OcrText, String> {
+    let tauri::ipc::InvokeBody::Raw(png) = request.body() else {
+        return Err("нужна картинка PNG".into());
+    };
+    let (w, h, rgba) = notch_core::shelf::decode_png(png)?;
+    run_ocr(w, h, rgba).await
+}
+
+/// WinRT calls block; run them on their own thread with their own apartment.
+async fn run_ocr(w: u32, h: u32, rgba: Vec<u8>) -> Result<ocr::OcrText, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(ocr::recognize(w, h, rgba));
+    });
+    tauri::async_runtime::spawn_blocking(move || rx.recv().map_err(|_| "распознавание прервано".to_string())?)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Opens (or re-targets) the annotation editor: a normal, focusable window
@@ -241,20 +254,6 @@ fn editor_result(request: tauri::ipc::Request<'_>, app: AppHandle, state: State<
 
 fn image_rgba(png: &[u8]) -> Result<Vec<u8>, String> {
     notch_core::shelf::decode_png(png).map(|(_, _, rgba)| rgba)
-}
-
-/// Recognises the text on a screenshot (Windows OCR, offline).
-#[tauri::command]
-async fn shelf_ocr(id: String, state: State<'_, Shared>) -> Result<ocr::OcrText, String> {
-    let (w, h, rgba) = lock(&state.shelf).load_rgba(&id)?;
-    // WinRT calls block; run them on their own thread with their own apartment.
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(ocr::recognize(w, h, rgba));
-    });
-    tauri::async_runtime::spawn_blocking(move || rx.recv().map_err(|_| "распознавание прервано".to_string())?)
-        .await
-        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -458,9 +457,8 @@ pub fn run() {
             clear_entries,
             shelf_copy,
             shelf_image,
-            shelf_open,
-            shelf_ocr,
             open_editor,
+            ocr_png,
             editor_result,
             shelf_remove,
             pin_entry,

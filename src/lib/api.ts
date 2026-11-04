@@ -93,9 +93,9 @@ export const api = {
   pasteEntry: (id: number) => invoke("paste_entry", { id }),
   pinEntry: (id: number, pinned: boolean) => invoke("pin_entry", { id, pinned }),
   shelfImage: (id: string) => invoke<ArrayBuffer>("shelf_image", { id }),
-  shelfOpen: (id: string) => invoke("shelf_open", { id }),
   openEditor: (id: string) => invoke("open_editor", { id }),
-  shelfOcr: (id: string) => invoke<OcrText>("shelf_ocr", { id }),
+  /** Raw PNG in, recognised text out (Windows OCR). */
+  ocrPng: (png: Uint8Array) => invoke<OcrText>("ocr_png", png),
   pasteText: (text: string) => invoke("paste_text", { text }),
   openDataFolder: () => invoke("open_data_folder"),
   setDragging: (dragging: boolean) => invoke("set_dragging", { dragging }),

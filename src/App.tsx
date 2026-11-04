@@ -100,12 +100,6 @@ export default function App() {
     };
   }, []);
 
-  // Text from a screenshot goes to the translator tab.
-  const translateText = (text: string) => {
-    setIncoming({ text, focus: false, seq: ++requestSeq.current });
-    setTab("translate");
-  };
-
   const showError = (message: string) => {
     setToast(message);
     window.clearTimeout(toastTimer.current);
@@ -179,7 +173,7 @@ export default function App() {
                   </button>
                 </header>
                 <main className="content">
-                  {tab === "shelf" && <Shelf items={shelf} onError={showError} onTranslate={translateText} />}
+                  {tab === "shelf" && <Shelf items={shelf} onError={showError} />}
                   {tab === "clipboard" && <Clipboard entries={texts} onError={showError} />}
                   {tab === "translate" && settings && (
                     <Translate incoming={incoming} provider={settings.provider} providerName={providerName} />

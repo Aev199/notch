@@ -103,6 +103,80 @@ html.is-editor #root {
   color: var(--faint);
 }
 
+.ed-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.btn.on {
+  background: var(--press);
+  color: var(--text);
+}
+
+.ed-panel {
+  flex: none;
+  width: min(360px, 34%);
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--line);
+}
+
+.ed-panel-part {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.ed-panel-part + .ed-panel-part {
+  border-top: 1px solid var(--line);
+}
+
+.ed-panel-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--faint);
+}
+
+.ed-ocr,
+.ed-translation {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.45;
+  user-select: text;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
+.ed-ocr {
+  resize: none;
+  border: 0;
+  outline: none;
+  background: transparent;
+}
+
+.ed-ocr::placeholder {
+  color: var(--faint);
+}
+
+.ed-panel-actions {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  margin-left: -8px;
+}
+
 .ed-stage {
   position: relative;
   flex: 1;
