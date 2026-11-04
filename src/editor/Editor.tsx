@@ -4,7 +4,20 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, direction, errorText, on, type Provider, type Translation } from "../lib/api";
 import { translate } from "../lib/translate";
 import { isSuperseded } from "../lib/offline";
-import { COLORS, box, cropOf, fontPx, render, unitOf, type Box, type Pt, type Shape, type Size } from "./draw";
+import {
+  COLORS,
+  DEFAULT_FONT,
+  FONT_SIZES,
+  box,
+  cropOf,
+  render,
+  textPx,
+  unitOf,
+  type Box,
+  type Pt,
+  type Shape,
+  type Size,
+} from "./draw";
 import { ToolIcon } from "./icons";
 import { CloseIcon } from "../components/Icons";
 
@@ -29,6 +42,13 @@ const SIZES: { id: Size; title: string }[] = [
 
 type Job<T> = { state: "idle" } | { state: "busy" } | { state: "done"; value: T } | { state: "error"; message: string };
 
+/** Unsaved changes and the window is closing, or another screenshot comes in. */
+type Ask = { reason: "close" } | { reason: "switch"; next: string };
+
+/** Absolute zoom limits (1 = one image pixel per CSS pixel). */
+const MIN_SCALE = 0.05;
+const MAX_SCALE = 8;
+
 interface TextDraft {
   at: Pt;
   value: string;
@@ -42,6 +62,16 @@ export function Editor({ initialId }: { initialId: string }) {
   const [tool, setTool] = useState<Tool>("arrow");
   const [color, setColor] = useState(COLORS[0]);
   const [size, setSize] = useState<Size>(1);
+  const [font, setFont] = useState(DEFAULT_FONT);
+  const [ask, setAsk] = useState<Ask | null>(null);
+  // View: `zoom` multiplies the fit-to-window scale; 1 = whole picture visible.
+  const [zoom, setZoom] = useState(1);
+  const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
+  const [paper, setPaper] = useState({ w: 1, h: 1 });
+  const stage = useRef<HTMLElement>(null);
+  const anchor = useRef<{ fx: number; fy: number; cx: number; cy: number } | null>(null);
+  const pan = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const [spaceDown, setSpaceDown] = useState(false);
   const [text, setText] = useState<TextDraft | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -83,6 +113,8 @@ export function Editor({ initialId }: { initialId: string }) {
       setOcr({ state: "idle" });
       setTr({ state: "idle" });
       setOcrText("");
+      setZoom(1);
+      setAsk(null);
     } catch (e) {
       setStatus(errorText(e));
     }
@@ -95,10 +127,15 @@ export function Editor({ initialId }: { initialId: string }) {
   useEffect(() => {
     void load(initialId);
     const unlisten = on<string>("editor-open", (next) => {
-      if (!dirtyRef.current || window.confirm("Отменить правки текущего скриншота?")) void load(next);
+      if (dirtyRef.current) setAsk({ reason: "switch", next });
+      else void load(next);
     });
+    // Unsaved marks: keep the window and ask (our own dialog, not confirm()).
     const unclose = getCurrentWindow().onCloseRequested((e) => {
-      if (dirtyRef.current && !window.confirm("Закрыть без сохранения?")) e.preventDefault();
+      if (dirtyRef.current) {
+        e.preventDefault();
+        setAsk({ reason: "close" });
+      }
     });
     return () => {
       void unlisten.then((off) => off());
@@ -119,7 +156,9 @@ export function Editor({ initialId }: { initialId: string }) {
         cropDraft = cropOf(shapes, img.width, img.height);
       }
       if (!cropDraft && tool === "crop") cropDraft = { x: 0, y: 0, w: img.width, h: img.height };
-      crop.current = render(canvas.current, img, list, cropDraft);
+      const c = render(canvas.current, img, list, cropDraft);
+      crop.current = c;
+      setPaper((p) => (p.w === c.w && p.h === c.h ? p : { w: c.w, h: c.h }));
     });
   }, [img, shapes, tool]);
 
@@ -195,7 +234,7 @@ export function Editor({ initialId }: { initialId: string }) {
 
   // ---- text --------------------------------------------------------------
   const commitText = () => {
-    if (text && text.value.trim()) commit({ t: "text", color, size, at: text.at, text: text.value.replace(/\s+$/, "") });
+    if (text && text.value.trim()) commit({ t: "text", color, font, at: text.at, text: text.value.replace(/\s+$/, "") });
     setText(null);
   };
 
@@ -230,14 +269,17 @@ export function Editor({ initialId }: { initialId: string }) {
     return new Uint8Array(await blob.arrayBuffer());
   };
 
-  const output = async (action: "save" | "copy") => {
+  /** `then`: after saving, close the window (default) or open another screenshot. */
+  const output = async (action: "save" | "copy", then?: string) => {
     setBusy(true);
     try {
       const png = await exportPng();
       await invoke("editor_result", png, { headers: { "x-notch-action": action, "x-notch-source": id } });
       if (action === "save") {
         dirtyRef.current = false;
-        await getCurrentWindow().close();
+        if (then) await load(then);
+        // destroy(): close() would ask onCloseRequested again.
+        else await getCurrentWindow().destroy();
       } else {
         setStatus("Скопировано в буфер");
         window.setTimeout(() => setStatus(null), 1500);
@@ -325,12 +367,128 @@ export function Editor({ initialId }: { initialId: string }) {
   const stale = ocr.state === "done" && ocrCrop.current !== cropKey();
   const [from, to] = tr.state === "done" ? [tr.value.from, tr.value.to] : direction(ocrText);
 
+  const answer = (choice: "save" | "discard" | "cancel") => {
+    const a = ask;
+    setAsk(null);
+    if (!a || choice === "cancel") return;
+    const next = a.reason === "switch" ? a.next : undefined;
+    if (choice === "save") void output("save", next);
+    else if (next) void load(next);
+    else void getCurrentWindow().destroy();
+  };
+
+  // ---- zoom & pan --------------------------------------------------------
+  useEffect(() => {
+    const el = stage.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setStageSize({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const PAD = 32;
+  // Fit the picture into the window, never enlarge it (until the stage is measured: 1).
+  const fit = stageSize.w > PAD && stageSize.h > PAD ? Math.min(1, (stageSize.w - PAD) / paper.w, (stageSize.h - PAD) / paper.h) : 1;
+  const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, fit * zoom));
+
+  /** Zooms keeping the picture point under (cx, cy) where it is. */
+  const zoomAt = (factor: number, cx?: number, cy?: number) => {
+    const el = stage.current;
+    const cv = canvas.current;
+    if (!el || !cv) return;
+    const r = cv.getBoundingClientRect();
+    const sr = el.getBoundingClientRect();
+    const x = cx ?? sr.left + sr.width / 2;
+    const y = cy ?? sr.top + sr.height / 2;
+    anchor.current = { fx: (x - r.left) / r.width, fy: (y - r.top) / r.height, cx: x - sr.left, cy: y - sr.top };
+    setZoom((z) => {
+      const target = Math.min(MAX_SCALE, Math.max(MIN_SCALE, fit * z * factor));
+      return target / fit;
+    });
+  };
+
+  useLayoutEffect(() => {
+    const a = anchor.current;
+    const el = stage.current;
+    const cv = canvas.current;
+    if (!a || !el || !cv) return;
+    anchor.current = null;
+    const paperEl = cv.parentElement!;
+    el.scrollLeft = paperEl.offsetLeft + a.fx * cv.clientWidth - a.cx;
+    el.scrollTop = paperEl.offsetTop + a.fy * cv.clientHeight - a.cy;
+  }, [scale]);
+
+  useEffect(() => {
+    const el = stage.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return; // plain wheel scrolls
+      e.preventDefault();
+      zoomAt(Math.exp(-e.deltaY * 0.0015), e.clientX, e.clientY);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  });
+
+  // Middle button, or Space held: drag the picture around when zoomed in.
+  const onStagePointerDown = (e: React.PointerEvent<HTMLElement>) => {
+    if (e.button !== 1 && !(e.button === 0 && spaceDown)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const el = stage.current!;
+    pan.current = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop };
+    el.setPointerCapture(e.pointerId);
+  };
+  const onStagePointerMove = (e: React.PointerEvent<HTMLElement>) => {
+    const p = pan.current;
+    if (!p) return;
+    const el = stage.current!;
+    el.scrollLeft = p.left - (e.clientX - p.x);
+    el.scrollTop = p.top - (e.clientY - p.y);
+  };
+  const onStagePointerUp = () => (pan.current = null);
+
+  const stepFont = (dir: 1 | -1) => {
+    const i = Math.max(0, FONT_SIZES.indexOf(font));
+    setFont(FONT_SIZES[Math.min(FONT_SIZES.length - 1, Math.max(0, i + dir))]);
+  };
+
   // ---- keyboard ----------------------------------------------------------
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (ask) {
+        if (e.key === "Escape") answer("cancel");
+        else if (e.key === "Enter") answer("save");
+        return;
+      }
+      const ctrl = e.ctrlKey || e.metaKey;
+      // Zoom works everywhere, also while typing a label.
+      if (ctrl && (e.code === "Equal" || e.code === "NumpadAdd")) {
+        e.preventDefault();
+        zoomAt(1.25);
+        return;
+      }
+      if (ctrl && (e.code === "Minus" || e.code === "NumpadSubtract")) {
+        e.preventDefault();
+        zoomAt(0.8);
+        return;
+      }
+      if (ctrl && (e.code === "Digit0" || e.code === "Numpad0")) {
+        e.preventDefault();
+        setZoom(1);
+        return;
+      }
       // Text fields (annotation text, recognised text) handle their own keys.
       if (text || (e.target as HTMLElement).matches?.("textarea, input")) return;
-      const ctrl = e.ctrlKey || e.metaKey;
+      if (e.code === "Space") {
+        e.preventDefault();
+        setSpaceDown(true);
+        return;
+      }
+      if (!ctrl && (e.code === "BracketLeft" || e.code === "BracketRight") && tool === "text") {
+        stepFont(e.code === "BracketRight" ? 1 : -1);
+        return;
+      }
       if (ctrl && e.code === "KeyZ") {
         e.preventDefault();
         if (e.shiftKey) redoOne();
@@ -350,26 +508,23 @@ export function Editor({ initialId }: { initialId: string }) {
         else if (e.code >= "Digit1" && e.code <= "Digit6") setColor(COLORS[Number(e.code.slice(5)) - 1]);
       }
     };
+    const onKeyUp = (e: KeyboardEvent) => e.code === "Space" && setSpaceDown(false);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUp);
+    };
   });
 
   // ---- view --------------------------------------------------------------
-  const cssScale = () => {
-    const c = canvas.current;
-    return c && c.width ? c.getBoundingClientRect().width / c.width : 1;
-  };
   const textStyle = (): React.CSSProperties => {
     if (!text || !img) return {};
-    const r = canvas.current!.getBoundingClientRect();
-    const host = canvas.current!.parentElement!.getBoundingClientRect();
-    const s = cssScale();
     const c = crop.current;
-    const px = fontPx(size, unitOf(img.width, img.height)) * s;
     return {
-      left: r.left - host.left + (text.at[0] - c.x) * s,
-      top: r.top - host.top + (text.at[1] - c.y) * s,
-      fontSize: px,
+      left: (text.at[0] - c.x) * scale,
+      top: (text.at[1] - c.y) * scale,
+      fontSize: textPx(font, unitOf(img.width, img.height)) * scale,
       lineHeight: 1.25,
       color,
     };
@@ -404,6 +559,28 @@ export function Editor({ initialId }: { initialId: string }) {
           ))}
         </div>
         <span className="ed-sep" />
+        {tool === "text" ? (
+          <div className="ed-group ed-font" title="Размер шрифта ([ и ])">
+            <button className="ed-tool" onClick={() => stepFont(-1)} disabled={font <= FONT_SIZES[0]} title="Меньше ([)">
+              <span className="ed-a small">A</span>
+            </button>
+            <select value={font} onChange={(e) => setFont(Number(e.target.value))}>
+              {FONT_SIZES.map((f) => (
+                <option key={f} value={f}>
+                  {f}
+                </option>
+              ))}
+            </select>
+            <button
+              className="ed-tool"
+              onClick={() => stepFont(1)}
+              disabled={font >= FONT_SIZES[FONT_SIZES.length - 1]}
+              title="Больше (])"
+            >
+              <span className="ed-a">A</span>
+            </button>
+          </div>
+        ) : (
         <div className="ed-group">
           {SIZES.map((s) => (
             <button
@@ -416,6 +593,7 @@ export function Editor({ initialId }: { initialId: string }) {
             </button>
           ))}
         </div>
+        )}
         <span className="ed-sep" />
         <div className="ed-group">
           <button className="ed-tool" title="Отменить (Ctrl+Z)" disabled={!shapes.length} onClick={undo}>
@@ -441,6 +619,9 @@ export function Editor({ initialId }: { initialId: string }) {
         </div>
         <span className="push" />
         {status && <span className="ed-status">{status}</span>}
+        <button className="btn" title="По размеру окна (Ctrl+0). Масштаб: Ctrl+колесо" onClick={() => setZoom(1)}>
+          {Math.round(scale * 100)}%
+        </button>
         {cropBox && img && (cropBox.w !== img.width || cropBox.h !== img.height) && (
           <span className="ed-status dim">
             {cropBox.w}×{cropBox.h}
@@ -454,10 +635,18 @@ export function Editor({ initialId }: { initialId: string }) {
         </button>
       </header>
       <div className="ed-body">
-      <main className="ed-stage">
+      <main
+        ref={stage}
+        className={`ed-stage${spaceDown ? " panning" : ""}`}
+        onPointerDownCapture={onStagePointerDown}
+        onPointerMove={onStagePointerMove}
+        onPointerUp={onStagePointerUp}
+      >
+        <div className="ed-paper" style={{ width: paper.w * scale, height: paper.h * scale }}>
         <canvas
+          style={{ width: paper.w * scale, height: paper.h * scale }}
           ref={canvas}
-          className={`ed-canvas tool-${tool}`}
+          className={`ed-canvas tool-${tool}${scale > 2 ? " crisp" : ""}`}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -486,6 +675,7 @@ export function Editor({ initialId }: { initialId: string }) {
             onBlur={commitText}
           />
         )}
+        </div>
       </main>
       {panel && (
         <aside className="ed-panel">
@@ -543,6 +733,26 @@ export function Editor({ initialId }: { initialId: string }) {
         </aside>
       )}
       </div>
+      {ask && (
+        <div className="ed-dialog-back" onPointerDown={() => answer("cancel")}>
+          <div className="ed-dialog" role="dialog" onPointerDown={(e) => e.stopPropagation()}>
+            <p>{ask.reason === "close" ? "Сохранить пометки перед закрытием?" : "Сохранить пометки перед тем, как открыть другой скриншот?"}</p>
+            <span className="dim">Сохранённая копия появится на полке, оригинал не изменится.</span>
+            <div className="ed-dialog-actions">
+              <button className="btn primary" autoFocus onClick={() => answer("save")}>
+                Сохранить
+              </button>
+              <button className="btn" onClick={() => answer("discard")}>
+                Не сохранять
+              </button>
+              <span className="push" />
+              <button className="btn" onClick={() => answer("cancel")}>
+                Отмена
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -10,7 +10,8 @@ export type Shape =
   | { t: "arrow"; color: string; size: Size; a: Pt; b: Pt }
   | { t: "rect"; color: string; size: Size; a: Pt; b: Pt }
   | { t: "blur"; size: Size; a: Pt; b: Pt }
-  | { t: "text"; color: string; size: Size; at: Pt; text: string }
+  /** `font`: letter height in units (see `unitOf`), from FONT_SIZES. */
+  | { t: "text"; color: string; font: number; at: Pt; text: string }
   | { t: "step"; color: string; size: Size; at: Pt; n: number }
   | { t: "crop"; a: Pt; b: Pt };
 
@@ -29,7 +30,9 @@ export function unitOf(w: number, h: number): number {
 }
 
 const STROKE = [2.5, 4, 7];
-const FONT = [18, 26, 38];
+/** Font sizes offered for text, in units (≈ px on a 1000 px wide image). */
+export const FONT_SIZES = [12, 16, 20, 26, 34, 44, 58, 76, 100];
+export const DEFAULT_FONT = 26;
 const STEP_R = [12, 16, 22];
 const BLOCK = [7, 11, 18];
 
@@ -37,8 +40,8 @@ export function box(a: Pt, b: Pt): Box {
   return { x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]), w: Math.abs(a[0] - b[0]), h: Math.abs(a[1] - b[1]) };
 }
 
-export function fontPx(size: Size, unit: number): number {
-  return FONT[size] * unit;
+export function textPx(font: number, unit: number): number {
+  return font * unit;
 }
 
 /** The last crop in the list wins; `null` means the whole image. */
@@ -147,7 +150,7 @@ function drawShape(ctx: CanvasRenderingContext2D, img: CanvasImageSource, s: Sha
       pixelate(ctx, img, box(s.a, s.b), BLOCK[s.size] * unit);
       break;
     case "text": {
-      const px = FONT[s.size] * unit;
+      const px = s.font * unit;
       ctx.font = `600 ${px}px "Segoe UI", system-ui, sans-serif`;
       ctx.textBaseline = "top";
       ctx.lineWidth = Math.max(2, px * 0.16);
