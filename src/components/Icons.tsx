@@ -88,3 +88,22 @@ export const InsertIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="M4 12h10M10 8l4 4-4 4M19 5v14" />
   </svg>
 );
+
+export const PinIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M9 4h6l-1 6 3 3H7l3-3-1-6ZM12 16v5" />
+  </svg>
+);
+
+export const SearchIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <circle cx="11" cy="11" r="6" />
+    <path d="m20 20-4.5-4.5" />
+  </svg>
+);
+
+export const TextIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M4 7V5h16v2M12 5v14M9 19h6" />
+  </svg>
+);

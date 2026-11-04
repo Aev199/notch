@@ -10,6 +10,12 @@ export interface TextEntry {
   id: number;
   text: string;
   copied_at: number;
+  pinned: boolean;
+}
+
+export interface OcrText {
+  text: string;
+  language: string;
 }
 
 export interface ShelfItem {
@@ -85,6 +91,10 @@ export const api = {
   shelfUngroup: (id: string) => invoke("shelf_ungroup", { id }),
   shelfRemoveGroup: (group: string) => invoke("shelf_remove_group", { group }),
   pasteEntry: (id: number) => invoke("paste_entry", { id }),
+  pinEntry: (id: number, pinned: boolean) => invoke("pin_entry", { id, pinned }),
+  shelfImage: (id: string) => invoke<ArrayBuffer>("shelf_image", { id }),
+  shelfOpen: (id: string) => invoke("shelf_open", { id }),
+  shelfOcr: (id: string) => invoke<OcrText>("shelf_ocr", { id }),
   pasteText: (text: string) => invoke("paste_text", { text }),
   openDataFolder: () => invoke("open_data_folder"),
   setDragging: (dragging: boolean) => invoke("set_dragging", { dragging }),

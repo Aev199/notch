@@ -51,6 +51,8 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const flashTimer = useRef<number>();
   const toastTimer = useRef<number>();
+  // One counter for every request to the translator, whatever its source.
+  const requestSeq = useRef(0);
   // Re-render once a minute so "5 мин" labels stay true while open.
   useMinuteTick(mode === "open");
 
@@ -74,7 +76,6 @@ export default function App() {
         }, 1500);
       }
     });
-    let seq = 0;
     const subs = [
       on<IslandEvent>("island", (e) => {
         setMode(e.mode);
@@ -83,7 +84,7 @@ export default function App() {
       }),
       on<TextEntry[]>("texts", setTexts),
       on<ShelfItem[]>("shelf", setShelf),
-      on<TranslateRequest>("translate-request", (r) => setIncoming({ ...r, seq: ++seq })),
+      on<TranslateRequest>("translate-request", (r) => setIncoming({ ...r, seq: ++requestSeq.current })),
       on<"shelf" | "clipboard">("captured", (kind) => {
         setFlash(kind);
         window.clearTimeout(flashTimer.current);
@@ -98,6 +99,12 @@ export default function App() {
       subs.forEach((p) => void p.then((off) => off()));
     };
   }, []);
+
+  // Text from a screenshot goes to the translator tab.
+  const translateText = (text: string) => {
+    setIncoming({ text, focus: false, seq: ++requestSeq.current });
+    setTab("translate");
+  };
 
   const showError = (message: string) => {
     setToast(message);
@@ -172,7 +179,7 @@ export default function App() {
                   </button>
                 </header>
                 <main className="content">
-                  {tab === "shelf" && <Shelf items={shelf} onError={showError} />}
+                  {tab === "shelf" && <Shelf items={shelf} onError={showError} onTranslate={translateText} />}
                   {tab === "clipboard" && <Clipboard entries={texts} onError={showError} />}
                   {tab === "translate" && settings && (
                     <Translate incoming={incoming} provider={settings.provider} providerName={providerName} />

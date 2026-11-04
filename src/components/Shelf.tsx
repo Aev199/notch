@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import { api, errorText, timeAgo, type ShelfItem } from "../lib/api";
 import { BackIcon, CheckIcon, CopyIcon, TrashIcon, UngroupIcon } from "./Icons";
+import { Preview } from "./Preview";
 
 const DRAG_THRESHOLD = 5;
 /** Drop target meaning "take it out of the group". */
@@ -26,6 +27,8 @@ interface Drag {
 interface Props {
   items: ShelfItem[];
   onError: (message: string) => void;
+  /** Send recognised text to the translator tab. */
+  onTranslate: (text: string) => void;
 }
 
 /** Loose screenshots and groups in one list, newest first. */
@@ -63,8 +66,9 @@ function dragOf(tile: Tile, x: number, y: number): Drag {
   };
 }
 
-export function Shelf({ items, onError }: Props) {
+export function Shelf({ items, onError, onTranslate }: Props) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const press = useRef<{ tile: Tile; x: number; y: number; pointer: number } | null>(null);
@@ -130,8 +134,9 @@ export function Shelf({ items, onError }: Props) {
     const p = press.current;
     press.current = null;
     if (!d) {
-      // A plain click on a group opens it.
+      // A plain click opens a group, or a screenshot in the preview.
       if (p?.tile.kind === "group") setOpenGroup(p.tile.key);
+      else if (p?.tile.kind === "shot") setPreview(p.tile.key);
       return;
     }
     setDragState(null);
@@ -153,11 +158,28 @@ export function Shelf({ items, onError }: Props) {
     }
   };
 
+  const previewItem = preview ? items.find((i) => i.id === preview) : undefined;
+  if (previewItem) {
+    return (
+      <div
+        className="shelf-wrap"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            setPreview(null);
+          }
+        }}
+      >
+        <Preview item={previewItem} onBack={() => setPreview(null)} onTranslate={onTranslate} onError={onError} />
+      </div>
+    );
+  }
+
   if (items.length === 0) {
     return (
       <div className="empty">
         <p>Здесь будут скриншоты из буфера</p>
-        <span>Win+Shift+S или PrtScr. Тащите за край — в другое окно, на другой скриншот — в группу.</span>
+        <span>Win+Shift+S или PrtScr. Клик — просмотр и текст, за край — в другое окно, на другой скриншот — в группу.</span>
       </div>
     );
   }
@@ -217,7 +239,7 @@ export function Shelf({ items, onError }: Props) {
               title={
                 tile.kind === "group"
                   ? `Группа из ${tile.items.length}: клик — открыть, за край — вынести все файлы`
-                  : `${first.width}×${first.height}: за край — в другое окно, на скриншот — в группу`
+                  : `${first.width}×${first.height}: клик — просмотр и текст, за край — в другое окно, на скриншот — в группу`
               }
               onPointerDown={(e) => onPointerDown(e, tile)}
             >

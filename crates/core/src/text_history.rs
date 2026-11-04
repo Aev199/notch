@@ -12,6 +12,10 @@ pub struct TextEntry {
     pub text: String,
     /// Unix time in milliseconds.
     pub copied_at: u64,
+    /// Pinned entries are never pushed out by the ring or removed by
+    /// "clear", and are kept on disk.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -69,7 +73,7 @@ impl TextHistory {
 
     pub fn set_limit(&mut self, limit: usize) {
         self.limit = limit.max(1);
-        self.entries.truncate(self.limit);
+        self.enforce_limit();
     }
 
     pub fn entries(&self) -> &[TextEntry] {
@@ -99,9 +103,33 @@ impl TextHistory {
         }
         let id = self.next_id.max(1);
         self.next_id = id + 1;
-        self.entries.insert(0, TextEntry { id, text, copied_at: now_ms });
-        self.entries.truncate(self.limit);
+        self.entries.insert(0, TextEntry { id, text, copied_at: now_ms, pinned: false });
+        self.enforce_limit();
         true
+    }
+
+    /// At most `limit` unpinned entries; pinned ones do not count.
+    fn enforce_limit(&mut self) {
+        let mut unpinned = 0;
+        let limit = self.limit;
+        self.entries.retain(|e| {
+            if e.pinned {
+                return true;
+            }
+            unpinned += 1;
+            unpinned <= limit
+        });
+    }
+
+    pub fn set_pinned(&mut self, id: u64, pinned: bool) -> bool {
+        let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) else { return false };
+        entry.pinned = pinned;
+        self.enforce_limit();
+        true
+    }
+
+    pub fn pinned(&self) -> impl Iterator<Item = &TextEntry> {
+        self.entries.iter().filter(|e| e.pinned)
     }
 
     pub fn remove(&mut self, id: u64) -> bool {
@@ -114,16 +142,24 @@ impl TextHistory {
         self.entries.iter().find(|e| e.id == id)
     }
 
+    /// Removes everything except pinned entries.
     pub fn clear(&mut self) {
-        self.entries.clear();
+        self.entries.retain(|e| e.pinned);
     }
 
-    /// Restores a history loaded from disk, re-applying the limit.
+    /// Restores a history loaded from disk, re-applying the limit. Entries
+    /// with the same text are kept once (pinned wins).
     pub fn restore(entries: Vec<TextEntry>, limit: usize) -> Self {
         let mut history = Self::new(limit);
         history.next_id = entries.iter().map(|e| e.id).max().unwrap_or(0) + 1;
-        history.entries = entries;
-        history.entries.truncate(history.limit);
+        for entry in entries {
+            match history.entries.iter_mut().find(|e| e.text == entry.text) {
+                Some(existing) => existing.pinned |= entry.pinned,
+                None => history.entries.push(entry),
+            }
+        }
+        history.entries.sort_by(|a, b| b.copied_at.cmp(&a.copied_at));
+        history.enforce_limit();
         history
     }
 }
@@ -193,5 +229,35 @@ mod tests {
         assert_eq!(r.entries()[0].id, 3);
         assert!(r.remove(1));
         assert!(r.get(1).is_none());
+    }
+
+    #[test]
+    fn pinned_entries_survive_ring_and_clear() {
+        let mut h = TextHistory::new(2);
+        h.push("keep", 1);
+        let id = h.entries()[0].id;
+        assert!(h.set_pinned(id, true));
+        for (i, t) in ["a", "b", "c"].iter().enumerate() {
+            h.push(t, 10 + i as u64);
+        }
+        let texts: Vec<_> = h.entries().iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(texts, ["c", "b", "keep"]);
+        h.clear();
+        assert_eq!(h.entries().len(), 1);
+        assert_eq!(h.pinned().count(), 1);
+        // Copying a pinned text again keeps it pinned.
+        h.push("x", 20);
+        h.push("keep", 21);
+        assert!(h.entries()[0].pinned);
+        assert!(h.set_pinned(id, false));
+        assert!(!h.set_pinned(999, true));
+    }
+
+    #[test]
+    fn restore_merges_pins_with_history() {
+        let mk = |id, text: &str, at, pinned| TextEntry { id, text: text.into(), copied_at: at, pinned };
+        let h = TextHistory::restore(vec![mk(1, "a", 5, false), mk(2, "b", 9, false), mk(3, "a", 1, true)], 5);
+        let view: Vec<_> = h.entries().iter().map(|e| (e.text.as_str(), e.pinned)).collect();
+        assert_eq!(view, [("b", false), ("a", true)]);
     }
 }

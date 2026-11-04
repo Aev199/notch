@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 
 pub const SETTINGS_FILE: &str = "notch.settings.json";
 pub const HISTORY_FILE: &str = "notch.history.json";
+/// Pinned clipboard entries: always saved (the user pinned them on purpose).
+pub const PINS_FILE: &str = "notch.pins.json";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]

@@ -4,6 +4,7 @@
 mod clip;
 mod models;
 mod net;
+mod ocr;
 mod overlay;
 mod state;
 mod win;
@@ -136,6 +137,13 @@ fn copy_text(text: String, app: AppHandle, state: State<'_, Shared>) -> Result<(
 }
 
 #[tauri::command]
+fn pin_entry(id: u64, pinned: bool, app: AppHandle, state: State<'_, Shared>) {
+    lock(&state.texts).set_pinned(id, pinned);
+    state.persist_texts();
+    state::emit_texts(&app);
+}
+
+#[tauri::command]
 fn remove_entry(id: u64, app: AppHandle, state: State<'_, Shared>) {
     lock(&state.texts).remove(id);
     state.persist_texts();
@@ -153,6 +161,34 @@ fn clear_entries(app: AppHandle, state: State<'_, Shared>) {
 fn shelf_copy(id: String, state: State<'_, Shared>) -> Result<(), String> {
     let (w, h, rgba) = lock(&state.shelf).load_rgba(&id)?;
     clip::write_image(&state, w, h, rgba)
+}
+
+/// Full-size PNG of a screenshot for the preview (raw bytes).
+#[tauri::command]
+fn shelf_image(id: String, state: State<'_, Shared>) -> Result<tauri::ipc::Response, String> {
+    let path = lock(&state.shelf).get(&id).map(|i| i.path.clone()).ok_or("скриншот не найден")?;
+    std::fs::read(&path).map(tauri::ipc::Response::new).map_err(|e| e.to_string())
+}
+
+/// Opens a screenshot in the default image viewer.
+#[tauri::command]
+fn shelf_open(id: String, state: State<'_, Shared>) -> Result<(), String> {
+    let path = lock(&state.shelf).get(&id).map(|i| i.path.clone()).ok_or("скриншот не найден")?;
+    open_in_explorer(std::path::Path::new(&path))
+}
+
+/// Recognises the text on a screenshot (Windows OCR, offline).
+#[tauri::command]
+async fn shelf_ocr(id: String, state: State<'_, Shared>) -> Result<ocr::OcrText, String> {
+    let (w, h, rgba) = lock(&state.shelf).load_rgba(&id)?;
+    // WinRT calls block; run them on their own thread with their own apartment.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(ocr::recognize(w, h, rgba));
+    });
+    tauri::async_runtime::spawn_blocking(move || rx.recv().map_err(|_| "распознавание прервано".to_string())?)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -308,15 +344,17 @@ fn load_state() -> App {
     let fallback = std::env::temp_dir().join("Notch");
     let data_dir = settings::data_dir(&exe_path(), &fallback);
     let settings = Settings::load(&data_dir.join(SETTINGS_FILE));
-    let texts = if settings.persist_text_history {
-        std::fs::read(data_dir.join(settings::HISTORY_FILE))
-            .ok()
-            .and_then(|raw| serde_json::from_slice::<Vec<TextEntry>>(&raw).ok())
-            .map(|entries| TextHistory::restore(entries, settings.text_limit))
-            .unwrap_or_else(|| TextHistory::new(settings.text_limit))
-    } else {
-        TextHistory::new(settings.text_limit)
+    let read = |file: &str| -> Vec<TextEntry> {
+        std::fs::read(data_dir.join(file)).ok().and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default()
     };
+    let mut entries = read(settings::PINS_FILE);
+    for entry in &mut entries {
+        entry.pinned = true;
+    }
+    if settings.persist_text_history {
+        entries.extend(read(settings::HISTORY_FILE));
+    }
+    let texts = TextHistory::restore(entries, settings.text_limit);
     let shelf_dir = settings::shelf_dir(&data_dir);
     let shelf = Shelf::open(&shelf_dir, settings.shelf_limit)
         .or_else(|_| Shelf::open(fallback.join("cache").join("shelf"), settings.shelf_limit))
@@ -353,7 +391,11 @@ pub fn run() {
             remove_entry,
             clear_entries,
             shelf_copy,
+            shelf_image,
+            shelf_open,
+            shelf_ocr,
             shelf_remove,
+            pin_entry,
             shelf_clear,
             shelf_group,
             shelf_ungroup,

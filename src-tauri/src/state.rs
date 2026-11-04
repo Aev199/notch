@@ -1,7 +1,7 @@
 //! Shared application state and the helpers every module uses to change it.
 
 use notch_core::hover::{HoverMachine, Mode, Timing, Transition};
-use notch_core::settings::{Settings, HISTORY_FILE};
+use notch_core::settings::{write_atomic, Settings, HISTORY_FILE, PINS_FILE};
 use notch_core::shelf::Shelf;
 use notch_core::text_history::{TextEntry, TextHistory};
 use serde::Serialize;
@@ -88,14 +88,24 @@ impl App {
         self.data_dir.join(HISTORY_FILE)
     }
 
-    /// Writes the text history to disk if the user asked for it, otherwise
-    /// makes sure no history file is left behind.
+    /// Saves pinned entries (always) and the whole text history (only if the
+    /// user asked for it; otherwise no history file is left behind).
     pub fn persist_texts(&self) {
+        let persist_all = lock(&self.settings).persist_text_history;
+        let (pinned, all): (Vec<TextEntry>, Vec<TextEntry>) = {
+            let texts = lock(&self.texts);
+            (texts.pinned().cloned().collect(), if persist_all { texts.entries().to_vec() } else { Vec::new() })
+        };
+        let pins = self.data_dir.join(PINS_FILE);
+        if pinned.is_empty() {
+            let _ = std::fs::remove_file(pins);
+        } else if let Ok(json) = serde_json::to_vec_pretty(&pinned) {
+            let _ = write_atomic(&pins, &json);
+        }
         let path = self.history_path();
-        if lock(&self.settings).persist_text_history {
-            let entries: Vec<TextEntry> = lock(&self.texts).entries().to_vec();
-            if let Ok(json) = serde_json::to_vec(&entries) {
-                let _ = notch_core::settings::write_atomic(&path, &json);
+        if persist_all {
+            if let Ok(json) = serde_json::to_vec(&all) {
+                let _ = write_atomic(&path, &json);
             }
         } else if path.exists() {
             let _ = std::fs::remove_file(path);
