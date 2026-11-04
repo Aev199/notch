@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import { api, errorText, timeAgo, type ShelfItem } from "../lib/api";
-import { BackIcon, CheckIcon, CopyIcon, InsertIcon, TextIcon, TrashIcon } from "./Icons";
+import { BackIcon, CheckIcon, CopyIcon, EditIcon, InsertIcon, TextIcon, TrashIcon } from "./Icons";
 
 interface Props {
   item: ShelfItem;
@@ -80,10 +80,18 @@ export function Preview({ item, onBack, onTranslate, onError }: Props) {
           <BackIcon width={14} height={14} />
           Полка
         </button>
-        <span className="dim">
-          {item.width}×{item.height} · {timeAgo(item.created_at)}
+        <span className="dim meta" title={timeAgo(item.created_at)}>
+          {item.width}×{item.height}
         </span>
         <span className="push" />
+        <button
+          className="btn"
+          title="Кисть, стрелки, текст, размытие, обрезка — в отдельном окне"
+          onClick={() => void api.openEditor(item.id).catch((e) => onError(errorText(e)))}
+        >
+          <EditIcon width={13} height={13} />
+          Править
+        </button>
         <button className="btn" disabled={ocr.state === "busy"} onClick={() => void recognize()} title="Распознать текст (офлайн, Windows OCR)">
           <TextIcon width={13} height={13} />
           Текст

@@ -94,6 +94,7 @@ export const api = {
   pinEntry: (id: number, pinned: boolean) => invoke("pin_entry", { id, pinned }),
   shelfImage: (id: string) => invoke<ArrayBuffer>("shelf_image", { id }),
   shelfOpen: (id: string) => invoke("shelf_open", { id }),
+  openEditor: (id: string) => invoke("open_editor", { id }),
   shelfOcr: (id: string) => invoke<OcrText>("shelf_ocr", { id }),
   pasteText: (text: string) => invoke("paste_text", { text }),
   openDataFolder: () => invoke("open_data_folder"),

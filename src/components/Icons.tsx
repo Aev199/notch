@@ -107,3 +107,9 @@ export const TextIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="M4 7V5h16v2M12 5v14M9 19h6" />
   </svg>
 );
+
+export const EditIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M4 20l4-1 11-11-3-3L5 16l-1 4ZM14 7l3 3" />
+  </svg>
+);

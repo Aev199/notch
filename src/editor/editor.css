@@ -1,0 +1,142 @@
+/* Editor window: a normal app window, same flat language as the island. */
+html.is-editor,
+html.is-editor body,
+html.is-editor #root {
+  background: #111113;
+}
+
+.editor {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.ed-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ed-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ed-sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--line);
+}
+
+.ed-tool,
+.ed-size {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.ed-tool:hover:not(:disabled),
+.ed-size:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.ed-tool.active,
+.ed-size.active {
+  background: var(--press);
+  color: var(--text);
+}
+
+.ed-tool:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.ed-size i {
+  display: block;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.ed-color {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.ed-color::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+
+.ed-color.active {
+  box-shadow: inset 0 0 0 1.5px var(--text);
+}
+
+.ed-status {
+  font-size: 12px;
+  color: var(--ok);
+}
+
+.ed-status.dim {
+  color: var(--faint);
+}
+
+.ed-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: #0b0b0d;
+  overflow: hidden;
+}
+
+.ed-canvas {
+  max-width: 100%;
+  max-height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.ed-canvas.tool-text {
+  cursor: text;
+}
+
+.ed-text {
+  position: absolute;
+  min-width: 80px;
+  padding: 0;
+  border: 0;
+  outline: 1px dashed rgba(255, 255, 255, 0.5);
+  background: transparent;
+  font-weight: 600;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  resize: none;
+  overflow: hidden;
+  white-space: pre;
+  user-select: text;
+}

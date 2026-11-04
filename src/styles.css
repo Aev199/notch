@@ -280,6 +280,13 @@ textarea {
   font-size: 12px;
 }
 
+.group-bar .meta {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .group-bar .back {
   padding-left: 4px;
 }

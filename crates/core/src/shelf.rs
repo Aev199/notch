@@ -86,6 +86,29 @@ pub fn encode(width: u32, height: u32, rgba: Vec<u8>) -> Result<Encoded, String>
     Ok(Encoded { hash, width, height, png, thumb })
 }
 
+/// PNG bytes → `(width, height, rgba)`.
+pub fn decode_png(png: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+    let img = image::load_from_memory_with_format(png, ImageFormat::Png).map_err(|e| format!("не PNG: {e}"))?.into_rgba8();
+    Ok((img.width(), img.height(), img.into_raw()))
+}
+
+/// An edited screenshot arriving as PNG bytes (from the editor window): the
+/// bytes are stored as they are, only the thumbnail and fingerprint are made.
+pub fn encode_png(png: &[u8]) -> Result<Encoded, String> {
+    let img = image::load_from_memory_with_format(png, ImageFormat::Png).map_err(|e| format!("не PNG: {e}"))?;
+    let (width, height) = (img.width(), img.height());
+    let rgba = img.to_rgba8();
+    let hash = fingerprint(width, height, rgba.as_raw());
+    let thumb_img = if width <= THUMB_SIZE && height <= THUMB_SIZE {
+        img
+    } else {
+        img.resize(THUMB_SIZE, THUMB_SIZE, FilterType::Triangle)
+    };
+    let mut thumb = Vec::new();
+    thumb_img.write_to(&mut Cursor::new(&mut thumb), ImageFormat::Png).map_err(|e| e.to_string())?;
+    Ok(Encoded { hash, width, height, png: png.to_vec(), thumb })
+}
+
 fn data_url(png: &[u8]) -> String {
     format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png))
 }
@@ -501,6 +524,21 @@ mod tests {
         let gid = shelf.group(&[ids[0].clone()], &ids[1], 15).unwrap();
         assert_eq!(shelf.remove_group(&gid), 2);
         assert_eq!(shelf.items().len(), 2);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn edited_png_is_stored_verbatim() {
+        let dir = temp_dir("edited");
+        let mut shelf = Shelf::open(&dir, 5).unwrap();
+        let enc = encode(300, 100, pixels(300, 100, 9)).unwrap();
+        let png = enc.png.clone();
+        let again = encode_png(&png).unwrap();
+        assert_eq!((again.width, again.height), (300, 100));
+        assert_eq!(again.hash, enc.hash);
+        let item = shelf.insert(again, 50).unwrap();
+        assert_eq!(fs::read(&item.path).unwrap(), png);
+        assert!(encode_png(b"not a png").is_err());
         fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -177,6 +177,72 @@ fn shelf_open(id: String, state: State<'_, Shared>) -> Result<(), String> {
     open_in_explorer(std::path::Path::new(&path))
 }
 
+/// Opens (or re-targets) the annotation editor: a normal, focusable window
+/// sized to most of the primary screen.
+#[tauri::command]
+fn open_editor(id: String, app: AppHandle, state: State<'_, Shared>) -> Result<(), String> {
+    use tauri::{Emitter, WebviewUrl, WebviewWindowBuilder};
+    if lock(&state.shelf).get(&id).is_none() {
+        return Err("скриншот не найден".into());
+    }
+    state::close_island(&app);
+    if let Some(editor) = app.get_webview_window("editor") {
+        let _ = editor.emit("editor-open", &id);
+        let _ = editor.unminimize();
+        let _ = editor.set_focus();
+        return Ok(());
+    }
+    let (w, h) = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|m| {
+            let s = m.scale_factor();
+            (m.size().width as f64 / s * 0.8, m.size().height as f64 / s * 0.8)
+        })
+        .unwrap_or((1200.0, 800.0));
+    let url = WebviewUrl::App(format!("index.html?editor={id}").into());
+    WebviewWindowBuilder::new(&app, "editor", url)
+        .title("Notch — редактор")
+        .inner_size(w.max(720.0), h.max(480.0))
+        .min_inner_size(640.0, 420.0)
+        .center()
+        .focused(true)
+        .build()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// The editor's result arrives as raw PNG bytes. Header `x-notch-action`:
+/// `save` puts it on the shelf (next to the original, in its group) and on
+/// the clipboard; `copy` only puts it on the clipboard.
+#[tauri::command]
+fn editor_result(request: tauri::ipc::Request<'_>, app: AppHandle, state: State<'_, Shared>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(png) = request.body() else {
+        return Err("редактор прислал не картинку".into());
+    };
+    let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let encoded = notch_core::shelf::encode_png(png)?;
+    let (w, h) = (encoded.width, encoded.height);
+    if header("x-notch-action") == "save" {
+        let source = header("x-notch-source");
+        let mut shelf = lock(&state.shelf);
+        let group = shelf.get(&source).and_then(|i| i.group.clone());
+        let item = shelf.insert(encoded, state::now_ms())?;
+        if let Some(group) = group {
+            let _ = shelf.group(&[item.id.clone()], &group, state::now_ms());
+        }
+        drop(shelf);
+        state::emit_shelf(&app);
+    }
+    let rgba = image_rgba(png)?;
+    clip::write_image(&state, w, h, rgba)
+}
+
+fn image_rgba(png: &[u8]) -> Result<Vec<u8>, String> {
+    notch_core::shelf::decode_png(png).map(|(_, _, rgba)| rgba)
+}
+
 /// Recognises the text on a screenshot (Windows OCR, offline).
 #[tauri::command]
 async fn shelf_ocr(id: String, state: State<'_, Shared>) -> Result<ocr::OcrText, String> {
@@ -394,6 +460,8 @@ pub fn run() {
             shelf_image,
             shelf_open,
             shelf_ocr,
+            open_editor,
+            editor_result,
             shelf_remove,
             pin_entry,
             shelf_clear,
