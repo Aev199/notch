@@ -85,7 +85,7 @@ fn open_island(app: AppHandle, tab: Option<String>) {
 
 /// One part of an embedded offline model, gzip-compressed, as raw bytes.
 #[tauri::command]
-fn offline_model(pair: String, part: String) -> Result<tauri::ipc::Response, String> {
+async fn offline_model(pair: String, part: String) -> Result<tauri::ipc::Response, String> {
     models::get(&pair, &part)
         .map(|bytes| tauri::ipc::Response::new(bytes.to_vec()))
         .ok_or_else(|| format!("нет модели {pair}/{part}"))
@@ -158,14 +158,14 @@ fn clear_entries(app: AppHandle, state: State<'_, Shared>) {
 }
 
 #[tauri::command]
-fn shelf_copy(id: String, state: State<'_, Shared>) -> Result<(), String> {
+async fn shelf_copy(id: String, state: State<'_, Shared>) -> Result<(), String> {
     let (w, h, rgba) = lock(&state.shelf).load_rgba(&id)?;
     clip::write_image(&state, w, h, rgba)
 }
 
 /// Full-size PNG of a screenshot for the preview (raw bytes).
 #[tauri::command]
-fn shelf_image(id: String, state: State<'_, Shared>) -> Result<tauri::ipc::Response, String> {
+async fn shelf_image(id: String, state: State<'_, Shared>) -> Result<tauri::ipc::Response, String> {
     let path = lock(&state.shelf).get(&id).map(|i| i.path.clone()).ok_or("скриншот не найден")?;
     std::fs::read(&path).map(tauri::ipc::Response::new).map_err(|e| e.to_string())
 }
@@ -191,9 +191,10 @@ async fn run_ocr(w: u32, h: u32, rgba: Vec<u8>) -> Result<ocr::OcrText, String> 
 }
 
 /// Opens (or re-targets) the annotation editor: a normal, focusable window
-/// sized to most of the primary screen.
+/// sized to most of the primary screen. Must be async: building a window in
+/// a sync command (run on the main thread) deadlocks on Windows (tauri#4121).
 #[tauri::command]
-fn open_editor(id: String, app: AppHandle, state: State<'_, Shared>) -> Result<(), String> {
+async fn open_editor(id: String, app: AppHandle, state: State<'_, Shared>) -> Result<(), String> {
     use tauri::{Emitter, WebviewUrl, WebviewWindowBuilder};
     if lock(&state.shelf).get(&id).is_none() {
         return Err("скриншот не найден".into());
@@ -230,7 +231,7 @@ fn open_editor(id: String, app: AppHandle, state: State<'_, Shared>) -> Result<(
 /// `save` puts it on the shelf (next to the original, in its group) and on
 /// the clipboard; `copy` only puts it on the clipboard.
 #[tauri::command]
-fn editor_result(request: tauri::ipc::Request<'_>, app: AppHandle, state: State<'_, Shared>) -> Result<(), String> {
+async fn editor_result(request: tauri::ipc::Request<'_>, app: AppHandle, state: State<'_, Shared>) -> Result<(), String> {
     let tauri::ipc::InvokeBody::Raw(png) = request.body() else {
         return Err("редактор прислал не картинку".into());
     };

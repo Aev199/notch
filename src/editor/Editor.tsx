@@ -70,7 +70,11 @@ export function Editor({ initialId }: { initialId: string }) {
     try {
       const bytes = await api.shelfImage(shotId);
       const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
-      setImg(bitmap);
+      // A 4K screenshot is ~33 MB of pixels: free the previous one right away.
+      setImg((old) => {
+        old?.close();
+        return bitmap;
+      });
       setShapes([]);
       setRedo([]);
       setText(null);

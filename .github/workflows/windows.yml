@@ -10,6 +10,10 @@ on:
         description: "Опубликовать GitHub Release с notch.exe"
         type: boolean
         default: false
+      notes:
+        description: "Заметки к выпуску (пункты через ;)"
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -54,10 +58,22 @@ jobs:
           name: notch-portable-${{ github.run_number }}
           path: src-tauri/target/release/notch.exe
 
+      - name: Release notes
+        if: github.event_name == 'workflow_dispatch' && inputs.release
+        shell: pwsh
+        env:
+          NOTES: ${{ inputs.notes }}
+        run: |
+          $items = $env:NOTES -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+          $body = ($items | ForEach-Object { "- $_" }) -join "`n"
+          $body += "`n`nОдин файл, без установки. Нужен WebView2 Runtime (есть в Windows 10/11 вместе с Edge)."
+          Set-Content -Path notes.md -Value $body -Encoding utf8
+
       - name: Release
         if: github.event_name == 'workflow_dispatch' && inputs.release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v0.1.${{ github.run_number }}
           name: Notch 0.1.${{ github.run_number }}
+          body_path: notes.md
           files: src-tauri/target/release/notch.exe

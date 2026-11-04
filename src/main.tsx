@@ -5,8 +5,10 @@ import { Editor } from "./editor/Editor";
 import "./styles.css";
 import "./editor/editor.css";
 
-// Overlay window: no browser context menu, no accidental zoom.
-window.addEventListener("contextmenu", (e) => e.preventDefault());
+// No browser context menu (except in text fields: copy/paste), no accidental zoom.
+window.addEventListener("contextmenu", (e) => {
+  if (!(e.target as HTMLElement).closest?.("textarea, input")) e.preventDefault();
+});
 window.addEventListener("wheel", (e) => e.ctrlKey && e.preventDefault(), { passive: false });
 
 // The same bundle serves the island (main window) and the editor window.
