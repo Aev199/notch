@@ -44,6 +44,34 @@ export interface Settings {
   captureImages: boolean;
   idleThin: boolean;
   idleSeconds: number;
+  autoUpdate: boolean;
+  lastUpdateCheck: number;
+}
+
+export interface UpdateOffer {
+  version: string;
+  notes: string[];
+  sha256: string;
+  source: string;
+  page: string;
+}
+
+export type UpdateStatus =
+  | { state: "idle" }
+  | { state: "checking" }
+  | { state: "upToDate"; checked_at: number }
+  | { state: "available"; update: UpdateOffer; from_file: boolean }
+  | { state: "downloading"; done: number; total: number | null }
+  | { state: "ready"; version: string }
+  | { state: "offline"; error: string }
+  | { state: "watching"; until: number }
+  | { state: "failed"; error: string };
+
+export interface UpdateInfo {
+  version: string;
+  status: UpdateStatus;
+  hasPrevious: boolean;
+  browserUrl: string;
 }
 
 export interface Snapshot {
@@ -65,7 +93,7 @@ export interface Translation {
 
 export interface IslandEvent {
   mode: Mode;
-  tab: Exclude<Tab, "settings"> | null;
+  tab: Tab | null;
   /** Put the caret into the translator field. */
   focus: boolean;
 }
@@ -106,6 +134,12 @@ export const api = {
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { new: settings }),
   setAutostart: (enabled: boolean) => invoke<boolean>("set_autostart", { enabled }),
   quit: () => invoke("quit"),
+  updateInfo: () => invoke<UpdateInfo>("update_info"),
+  updateCheck: () => invoke("update_check"),
+  updateInstall: () => invoke("update_install"),
+  updateBrowser: () => invoke("update_browser"),
+  updateRestart: () => invoke("update_restart"),
+  updateRollback: () => invoke("update_rollback"),
 };
 
 export function on<T>(event: string, handler: (payload: T) => void): Promise<UnlistenFn> {

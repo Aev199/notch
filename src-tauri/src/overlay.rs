@@ -51,10 +51,18 @@ fn run(app: AppHandle) {
     let mut last_slow = Instant::now();
     let mut force_thin = false;
     let mut delay = FAST;
+    let mut last_tick = now_ms();
 
     loop {
         std::thread::sleep(delay);
         let hwnd = shared.hwnd();
+        // This loop sleeps 16–50 ms; a jump of seconds on the wall clock
+        // means the system was asleep. A backup for the wake listener.
+        let tick = now_ms();
+        if tick.saturating_sub(last_tick) > 5_000 {
+            crate::wake::notify("clock gap");
+        }
+        last_tick = tick;
 
         if last_slow.elapsed() >= SLOW_EVERY {
             last_slow = Instant::now();

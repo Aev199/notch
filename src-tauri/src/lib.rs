@@ -7,6 +7,8 @@ mod net;
 mod ocr;
 mod overlay;
 mod state;
+mod updates;
+mod wake;
 mod win;
 
 use notch_core::settings::{self, Settings, SETTINGS_FILE};
@@ -78,6 +80,7 @@ fn open_island(app: AppHandle, tab: Option<String>) {
         Some("shelf") => Some("shelf"),
         Some("clipboard") => Some("clipboard"),
         Some("translate") => Some("translate"),
+        Some("settings") => Some("settings"),
         _ => None,
     };
     state::open_island(&app, tab, 4_000, false);
@@ -377,9 +380,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Открыть челку", true, None::<&str>)?;
     let translate = MenuItem::with_id(app, "translate", "Перевести буфер", true, None::<&str>)?;
     let folder = MenuItem::with_id(app, "folder", "Папка программы", true, None::<&str>)?;
+    let repaint = MenuItem::with_id(app, "repaint", "Перерисовать окно", true, None::<&str>)?;
+    let update = MenuItem::with_id(app, "update", "Обновления…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&open, &translate, &folder, &sep, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &translate, &folder, &repaint, &update, &sep, &quit])?;
     let mut builder = TrayIconBuilder::with_id("notch")
         .tooltip("Notch")
         .menu(&menu)
@@ -391,6 +396,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 let dir = app.state::<Shared>().data_dir.clone();
                 let _ = open_in_explorer(&dir);
             }
+            "repaint" => {
+                let app = app.clone();
+                std::thread::spawn(move || wake::repair(&app));
+            }
+            "update" => state::open_island(app, Some("settings"), 6_000, false),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -429,7 +439,19 @@ fn load_state() -> App {
 }
 
 pub fn run() {
-    if !win::claim_single_instance("Local\\NotchIsland.SingleInstance") {
+    const INSTANCE: &str = "Local\\NotchIsland.SingleInstance";
+    let mut claimed = win::claim_single_instance(INSTANCE);
+    // Restarted after an update: the old copy is still quitting.
+    if !claimed && std::env::args().any(|a| a == updates::AFTER_UPDATE) {
+        for _ in 0..60 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            claimed = win::claim_single_instance(INSTANCE);
+            if claimed {
+                break;
+            }
+        }
+    }
+    if !claimed {
         return;
     }
     let shared: Shared = Arc::new(load_state());
@@ -460,6 +482,12 @@ pub fn run() {
             shelf_image,
             open_editor,
             ocr_png,
+            updates::update_info,
+            updates::update_check,
+            updates::update_install,
+            updates::update_browser,
+            updates::update_restart,
+            updates::update_rollback,
             editor_result,
             shelf_remove,
             pin_entry,
@@ -507,6 +535,8 @@ pub fn run() {
             });
 
             clip::spawn_listener(handle.clone());
+            wake::spawn(handle.clone());
+            updates::spawn(handle.clone());
             overlay::spawn(handle);
             Ok(())
         })

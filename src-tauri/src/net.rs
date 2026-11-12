@@ -101,3 +101,35 @@ pub async fn translate(settings: &Settings, text: &str) -> Result<Translation, S
     };
     Ok(Translation { text: result, from, to, provider: settings.provider })
 }
+
+pub type Progress = Box<dyn FnMut(u64, Option<u64>) + Send>;
+
+/// GET a URL fully into memory (GitHub API, release files), with progress.
+pub async fn get_bytes(url: &str, mut progress: Option<Progress>) -> Result<Vec<u8>, String> {
+    let err = |e: reqwest::Error| {
+        if e.is_connect() || e.is_timeout() || e.is_request() {
+            "нет доступа к GitHub".to_string()
+        } else {
+            format!("сеть: {e}")
+        }
+    };
+    let mut resp = client()
+        .get(url)
+        .header("Accept", "application/vnd.github+json, application/octet-stream")
+        .timeout(Duration::from_secs(600))
+        .send()
+        .await
+        .map_err(err)?;
+    if !resp.status().is_success() {
+        return Err(format!("GitHub ответил {}", resp.status()));
+    }
+    let total = resp.content_length();
+    let mut body = Vec::with_capacity(total.unwrap_or(0).min(128 << 20) as usize);
+    while let Some(chunk) = resp.chunk().await.map_err(err)? {
+        body.extend_from_slice(&chunk);
+        if let Some(p) = progress.as_mut() {
+            p(body.len() as u64, total);
+        }
+    }
+    Ok(body)
+}

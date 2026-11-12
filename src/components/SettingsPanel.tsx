@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, errorText, type Provider, type Settings } from "../lib/api";
+import { Updates } from "./Updates";
 
 interface Props {
   settings: Settings;
@@ -49,6 +50,8 @@ export function SettingsPanel({ settings, autostart, dataDir, onSaved, onAutosta
 
   return (
     <div className="settings">
+      <Updates onError={(m) => setStatus({ ok: false, text: m })} />
+
       <section>
         <h3>Переводчик</h3>
         <label className="row">
@@ -132,6 +135,10 @@ export function SettingsPanel({ settings, autostart, dataDir, onSaved, onAutosta
         <label className="check">
           <input type="checkbox" checked={autostart} onChange={(e) => void toggleAutostart(e.target.checked)} />
           <span>Запускать вместе с Windows</span>
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={draft.autoUpdate} onChange={(e) => set("autoUpdate", e.target.checked)} />
+          <span>Проверять обновления раз в день (и «Загрузки» раз в час)</span>
         </label>
       </section>
 

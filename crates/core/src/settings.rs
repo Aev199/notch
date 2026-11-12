@@ -36,6 +36,10 @@ pub struct Settings {
     /// Shrink the capsule to a thin strip after `idle_seconds` without activity.
     pub idle_thin: bool,
     pub idle_seconds: u64,
+    /// Look for a new version once a day (GitHub; Downloads folder).
+    pub auto_update: bool,
+    /// Unix ms of the last online check (not shown in the UI).
+    pub last_update_check: u64,
 }
 
 impl Default for Settings {
@@ -55,6 +59,8 @@ impl Default for Settings {
             capture_images: true,
             idle_thin: true,
             idle_seconds: 4,
+            auto_update: true,
+            last_update_check: 0,
         }
     }
 }

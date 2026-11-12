@@ -721,3 +721,39 @@ textarea {
   color: #ffb0b0;
   font-size: 12px;
 }
+
+/* Updates */
+.update-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+}
+
+.update-notes {
+  margin: 2px 0 0 18px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.icon-btn.badge-dot {
+  position: relative;
+}
+
+.icon-btn.badge-dot::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}

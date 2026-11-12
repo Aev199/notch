@@ -10,3 +10,4 @@ pub mod settings;
 pub mod shelf;
 pub mod text_history;
 pub mod translate;
+pub mod update;

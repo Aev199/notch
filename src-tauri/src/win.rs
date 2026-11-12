@@ -230,12 +230,78 @@ mod imp {
         }
     }
 
+    /// The version in an EXE's file properties ("0.1.47").
+    pub fn exe_version(path: &std::path::Path) -> Option<String> {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO,
+        };
+        let name: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        unsafe {
+            let size = GetFileVersionInfoSizeW(name.as_ptr(), std::ptr::null_mut());
+            if size == 0 {
+                return None;
+            }
+            let mut data = vec![0u8; size as usize];
+            if GetFileVersionInfoW(name.as_ptr(), 0, size, data.as_mut_ptr().cast()) == 0 {
+                return None;
+            }
+            let root = [u16::from(b'\\'), 0];
+            let mut info: *mut c_void = std::ptr::null_mut();
+            let mut len = 0u32;
+            if VerQueryValueW(data.as_ptr().cast(), root.as_ptr(), &mut info, &mut len) == 0 || info.is_null() {
+                return None;
+            }
+            let info = &*(info as *const VS_FIXEDFILEINFO);
+            let (ms, ls) = (info.dwFileVersionMS, info.dwFileVersionLS);
+            Some(format!("{}.{}.{}", ms >> 16, ms & 0xFFFF, ls >> 16))
+        }
+    }
+
+    /// The user's Downloads folder, wherever it was moved.
+    pub fn downloads_dir() -> Option<std::path::PathBuf> {
+        use windows_sys::Win32::System::Com::CoTaskMemFree;
+        use windows_sys::Win32::UI::Shell::{FOLDERID_Downloads, SHGetKnownFolderPath};
+        unsafe {
+            let mut raw: *mut u16 = std::ptr::null_mut();
+            if SHGetKnownFolderPath(&FOLDERID_Downloads, 0, std::ptr::null_mut(), &mut raw) < 0 || raw.is_null() {
+                return None;
+            }
+            let len = (0..).take_while(|&i| *raw.add(i) != 0).count();
+            let text = String::from_utf16_lossy(std::slice::from_raw_parts(raw, len));
+            CoTaskMemFree(raw as *const c_void);
+            Some(std::path::PathBuf::from(text))
+        }
+    }
+
+    /// Opens a URL in the default browser (or a file/folder in its app).
+    pub fn shell_open(target: &str) -> bool {
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        let verb = wide("open");
+        let what = wide(target);
+        let result = unsafe {
+            ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), what.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL)
+        };
+        result as isize > 32
+    }
+
     /// Returns `false` when another copy of the app already runs in this session.
     /// The mutex handle is intentionally leaked: it lives as long as the process.
     pub fn claim_single_instance(name: &str) -> bool {
+        use windows_sys::Win32::Foundation::CloseHandle;
         unsafe {
             let handle = CreateMutexW(std::ptr::null(), 0, wide(name).as_ptr());
-            !(handle.is_null() || GetLastError() == ERROR_ALREADY_EXISTS)
+            if handle.is_null() {
+                return false;
+            }
+            if GetLastError() == ERROR_ALREADY_EXISTS {
+                // Our handle would keep the mutex alive after the other copy
+                // exits (a restart after an update waits for exactly that).
+                CloseHandle(handle);
+                return false;
+            }
+            true
         }
     }
 
@@ -319,21 +385,21 @@ mod imp {
         0
     }
     pub fn force_foreground(_: isize) {}
-    pub fn clipboard_marked_private() -> bool {
-        false
-    }
     pub fn send_paste() -> bool {
         false
     }
-    /// Returns `false` when another copy of the app already runs in this session.
-    /// The mutex handle is intentionally leaked: it lives as long as the process.
-    pub fn claim_single_instance(name: &str) -> bool {
-        unsafe {
-            let handle = CreateMutexW(std::ptr::null(), 0, wide(name).as_ptr());
-            !(handle.is_null() || GetLastError() == ERROR_ALREADY_EXISTS)
-        }
+    pub fn clipboard_marked_private() -> bool {
+        false
     }
-
+    pub fn exe_version(_: &std::path::Path) -> Option<String> {
+        None
+    }
+    pub fn downloads_dir() -> Option<std::path::PathBuf> {
+        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Downloads"))
+    }
+    pub fn shell_open(target: &str) -> bool {
+        std::process::Command::new("xdg-open").arg(target).spawn().is_ok()
+    }
     pub fn claim_single_instance(_: &str) -> bool {
         true
     }

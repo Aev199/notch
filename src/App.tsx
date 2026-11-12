@@ -11,6 +11,7 @@ import {
   type Tab,
   type TextEntry,
   type TranslateRequest,
+  type UpdateStatus,
 } from "./lib/api";
 import { translateOffline } from "./lib/offline";
 import { useMinuteTick } from "./lib/time";
@@ -19,6 +20,7 @@ import { Clipboard } from "./components/Clipboard";
 import { Translate, type Incoming } from "./components/Translate";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ClipIcon, CloseIcon, GearIcon, ImageIcon } from "./components/Icons";
+import { updatePending } from "./components/Updates";
 
 /** Logical sizes; compact and open must match the backend hitboxes. */
 const SIZES: Record<Mode, { width: number; height: number; radius: number }> = {
@@ -49,6 +51,7 @@ export default function App() {
   const [incoming, setIncoming] = useState<Incoming | null>(null);
   const [flash, setFlash] = useState<"shelf" | "clipboard" | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const flashTimer = useRef<number>();
   const toastTimer = useRef<number>();
   // One counter for every request to the translator, whatever its source.
@@ -59,6 +62,7 @@ export default function App() {
   useEffect(() => {
     void api.setIslandSize(SIZES.open.width, SIZES.open.height);
     let warm: number | undefined;
+    void api.updateInfo().then((i) => setUpdate(i.status)).catch(() => {});
     void api.snapshot().then((s) => {
       setSnapshot(s);
       setSettings(s.settings);
@@ -89,6 +93,13 @@ export default function App() {
         setFlash(kind);
         window.clearTimeout(flashTimer.current);
         flashTimer.current = window.setTimeout(() => setFlash(null), 1400);
+      }),
+      on<UpdateStatus>("update", setUpdate),
+      // After sleep the backend rebuilds the window; nudge the page to repaint too.
+      on<null>("repaint", () => {
+        const root = document.documentElement;
+        root.style.opacity = "0.99";
+        requestAnimationFrame(() => requestAnimationFrame(() => (root.style.opacity = "")));
       }),
       on<boolean>("input-mode", (active) => {
         if (!active) (document.activeElement as HTMLElement | null)?.blur();
@@ -162,8 +173,8 @@ export default function App() {
                     </button>
                   )}
                   <button
-                    className={`icon-btn${tab === "settings" ? " active" : ""}`}
-                    title="Настройки"
+                    className={`icon-btn${tab === "settings" ? " active" : ""}${updatePending(update) ? " badge-dot" : ""}`}
+                    title={updatePending(update) ? "Настройки — есть обновление" : "Настройки"}
                     onClick={() => setTab(tab === "settings" ? "shelf" : "settings")}
                   >
                     <GearIcon />

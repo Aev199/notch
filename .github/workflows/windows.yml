@@ -40,6 +40,19 @@ jobs:
       - name: Core tests
         run: cargo test --manifest-path crates/core/Cargo.toml
 
+      # The build number is the version the app compares when updating;
+      # it lands in the EXE's file properties too.
+      - name: Stamp version
+        shell: pwsh
+        run: |
+          $version = "0.1.${{ github.run_number }}"
+          "NOTCH_VERSION=$version" >> $env:GITHUB_ENV
+          $path = "src-tauri/tauri.conf.json"
+          $conf = Get-Content $path -Raw | ConvertFrom-Json
+          $conf.version = $version
+          $utf8 = New-Object System.Text.UTF8Encoding($false)
+          [System.IO.File]::WriteAllText((Resolve-Path $path), ($conf | ConvertTo-Json -Depth 32), $utf8)
+
       - name: Install frontend deps
         run: npm ci
 
@@ -58,16 +71,22 @@ jobs:
           name: notch-portable-${{ github.run_number }}
           path: src-tauri/target/release/notch.exe
 
-      - name: Release notes
+      # notes.md for the release page, latest.json for the app's updater.
+      - name: Release notes and manifest
         if: github.event_name == 'workflow_dispatch' && inputs.release
         shell: pwsh
         env:
           NOTES: ${{ inputs.notes }}
         run: |
-          $items = $env:NOTES -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+          $items = @($env:NOTES -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
           $body = ($items | ForEach-Object { "- $_" }) -join "`n"
           $body += "`n`nОдин файл, без установки. Нужен WebView2 Runtime (есть в Windows 10/11 вместе с Edge)."
-          Set-Content -Path notes.md -Value $body -Encoding utf8
+          $utf8 = New-Object System.Text.UTF8Encoding($false)
+          [System.IO.File]::WriteAllText((Join-Path $PWD "notes.md"), $body, $utf8)
+          $sha = (Get-FileHash src-tauri/target/release/notch.exe -Algorithm SHA256).Hash.ToLower()
+          $manifest = [ordered]@{ version = $env:NOTCH_VERSION; sha256 = $sha; notes = $items } | ConvertTo-Json -Depth 4
+          [System.IO.File]::WriteAllText((Join-Path $PWD "latest.json"), $manifest, $utf8)
+          Get-Content latest.json
 
       - name: Release
         if: github.event_name == 'workflow_dispatch' && inputs.release
@@ -76,4 +95,6 @@ jobs:
           tag_name: v0.1.${{ github.run_number }}
           name: Notch 0.1.${{ github.run_number }}
           body_path: notes.md
-          files: src-tauri/target/release/notch.exe
+          files: |
+            src-tauri/target/release/notch.exe
+            latest.json
