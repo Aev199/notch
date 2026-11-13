@@ -221,6 +221,7 @@ async fn open_editor(id: String, app: AppHandle, state: State<'_, Shared>) -> Re
     let url = WebviewUrl::App(format!("index.html?editor={id}").into());
     WebviewWindowBuilder::new(&app, "editor", url)
         .title("Notch — редактор")
+        .always_on_top(true)
         .inner_size(w.max(720.0), h.max(480.0))
         .min_inner_size(640.0, 420.0)
         .center()
@@ -482,6 +483,7 @@ pub fn run() {
             shelf_image,
             open_editor,
             ocr_png,
+            clipboard_image,
             updates::update_info,
             updates::update_check,
             updates::update_install,

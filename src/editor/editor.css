@@ -34,8 +34,7 @@ html.is-editor #root {
   background: var(--line);
 }
 
-.ed-tool,
-.ed-size {
+.ed-tool {
   display: grid;
   place-items: center;
   width: 32px;
@@ -47,14 +46,12 @@ html.is-editor #root {
   cursor: pointer;
 }
 
-.ed-tool:hover:not(:disabled),
-.ed-size:hover {
+.ed-tool:hover:not(:disabled) {
   background: var(--hover);
   color: var(--text);
 }
 
-.ed-tool.active,
-.ed-size.active {
+.ed-tool.active {
   background: var(--press);
   color: var(--text);
 }
@@ -62,12 +59,6 @@ html.is-editor #root {
 .ed-tool:disabled {
   opacity: 0.3;
   cursor: default;
-}
-
-.ed-size i {
-  display: block;
-  border-radius: 50%;
-  background: currentColor;
 }
 
 .ed-color {
@@ -237,45 +228,6 @@ html.is-editor #root {
   font-size: 11px;
 }
 
-.ed-dialog-back {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  display: grid;
-  place-items: center;
-  background: rgba(0, 0, 0, 0.45);
-}
-
-.ed-dialog {
-  width: min(420px, 90vw);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 16px;
-  border-radius: 10px;
-  background: #18181b;
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-
-.ed-dialog p {
-  font-size: 14px;
-}
-
-.ed-dialog .dim {
-  font-size: 12px;
-}
-
-.ed-dialog-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 10px;
-}
-
-.ed-dialog-actions .btn {
-  height: 28px;
-  padding: 0 12px;
-}
-
 .ed-canvas.tool-text {
   cursor: text;
 }
@@ -293,4 +245,131 @@ html.is-editor #root {
   overflow: hidden;
   white-space: pre;
   user-select: text;
+}
+
+/* Stroke width slider */
+.ed-width {
+  gap: 8px;
+  padding: 0 4px;
+  color: var(--text);
+}
+
+.ed-width.off {
+  opacity: 0.35;
+}
+
+.ed-width i {
+  flex: none;
+  display: block;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.ed-width input {
+  width: 110px;
+  accent-color: var(--accent);
+}
+
+.ed-width-value {
+  width: 18px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A pasted picture being moved / resized */
+.ed-selection {
+  position: absolute;
+  box-shadow: 0 0 0 1px var(--accent);
+  cursor: move;
+  touch-action: none;
+}
+
+.ed-handle {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--accent);
+  cursor: nwse-resize;
+}
+
+.ed-sel-delete {
+  position: absolute;
+  top: -11px;
+  right: -11px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 50%;
+  background: #18181b;
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--line);
+  cursor: pointer;
+}
+
+.ed-sel-delete:hover {
+  color: var(--danger);
+}
+
+/* "Insert a picture" popover */
+.ed-menu-host {
+  position: relative;
+}
+
+.ed-picker {
+  position: absolute;
+  top: 38px;
+  left: 0;
+  z-index: 30;
+  width: 320px;
+  max-height: 360px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  background: #18181b;
+  box-shadow: inset 0 0 0 1px var(--line);
+  scrollbar-width: thin;
+}
+
+.ed-picker .btn {
+  justify-content: flex-start;
+}
+
+.ed-picker .dim {
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.ed-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.ed-picker-grid button {
+  height: 64px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: #0b0b0d;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.ed-picker-grid button:hover {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.ed-picker-grid img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }

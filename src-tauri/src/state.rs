@@ -43,6 +43,10 @@ pub struct App {
     pub prev_foreground: AtomicIsize,
     pub input_mode: AtomicBool,
     pub hidden_for_fullscreen: AtomicBool,
+    /// Last moment (ms) a copy chord (Ctrl+C/X/Insert) was seen held.
+    pub last_copy_keys: AtomicU64,
+    /// Last moment (ms) the right mouse button was seen held (context menu).
+    pub last_right_click: AtomicU64,
 }
 
 pub fn now_ms() -> u64 {
@@ -77,6 +81,8 @@ impl App {
             prev_foreground: AtomicIsize::new(0),
             input_mode: AtomicBool::new(false),
             hidden_for_fullscreen: AtomicBool::new(false),
+            last_copy_keys: AtomicU64::new(0),
+            last_right_click: AtomicU64::new(0),
         }
     }
 

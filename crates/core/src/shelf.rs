@@ -4,7 +4,8 @@
 use base64::Engine;
 use image::{imageops::FilterType, ImageBuffer, ImageFormat, Rgba};
 use serde::Serialize;
-use std::collections::BTreeMap;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
@@ -45,6 +46,18 @@ pub struct Shelf {
     last_hash: Option<u64>,
     /// item id → group id
     groups: BTreeMap<String, String>,
+    /// item id → pixel hash, filled lazily (only for same-size candidates).
+    pixel_hashes: HashMap<String, [u8; 32]>,
+}
+
+/// Identity of an image's pixels (and size): equal for the same picture
+/// whichever PNG encoder wrote it.
+pub fn pixel_hash(width: u32, height: u32, rgba: &[u8]) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(width.to_le_bytes());
+    h.update(height.to_le_bytes());
+    h.update(rgba);
+    h.finalize().into()
 }
 
 /// Cheap fingerprint of an RGBA buffer, used to ignore the same image being
@@ -64,6 +77,7 @@ pub fn fingerprint(width: u32, height: u32, rgba: &[u8]) -> u64 {
 #[derive(Debug)]
 pub struct Encoded {
     pub hash: u64,
+    pub pixels: [u8; 32],
     pub width: u32,
     pub height: u32,
     png: Vec<u8>,
@@ -74,6 +88,7 @@ pub struct Encoded {
 /// so it does not need — and must not hold — the shelf lock.
 pub fn encode(width: u32, height: u32, rgba: Vec<u8>) -> Result<Encoded, String> {
     let hash = fingerprint(width, height, &rgba);
+    let pixels = pixel_hash(width, height, &rgba);
     let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> =
         ImageBuffer::from_raw(width, height, rgba).ok_or("размер изображения не совпадает с данными")?;
     let mut png = Vec::new();
@@ -83,7 +98,7 @@ pub fn encode(width: u32, height: u32, rgba: Vec<u8>) -> Result<Encoded, String>
         if width <= THUMB_SIZE && height <= THUMB_SIZE { img } else { img.resize(THUMB_SIZE, THUMB_SIZE, FilterType::Triangle) };
     let mut thumb = Vec::new();
     thumb_img.write_to(&mut Cursor::new(&mut thumb), ImageFormat::Png).map_err(|e| e.to_string())?;
-    Ok(Encoded { hash, width, height, png, thumb })
+    Ok(Encoded { hash, pixels, width, height, png, thumb })
 }
 
 /// PNG bytes → `(width, height, rgba)`.
@@ -99,6 +114,7 @@ pub fn encode_png(png: &[u8]) -> Result<Encoded, String> {
     let (width, height) = (img.width(), img.height());
     let rgba = img.to_rgba8();
     let hash = fingerprint(width, height, rgba.as_raw());
+    let pixels = pixel_hash(width, height, rgba.as_raw());
     let thumb_img = if width <= THUMB_SIZE && height <= THUMB_SIZE {
         img
     } else {
@@ -106,7 +122,7 @@ pub fn encode_png(png: &[u8]) -> Result<Encoded, String> {
     };
     let mut thumb = Vec::new();
     thumb_img.write_to(&mut Cursor::new(&mut thumb), ImageFormat::Png).map_err(|e| e.to_string())?;
-    Ok(Encoded { hash, width, height, png: png.to_vec(), thumb })
+    Ok(Encoded { hash, pixels, width, height, png: png.to_vec(), thumb })
 }
 
 fn data_url(png: &[u8]) -> String {
@@ -119,7 +135,14 @@ impl Shelf {
     pub fn open(dir: impl Into<PathBuf>, limit: usize) -> std::io::Result<Self> {
         let dir = dir.into();
         fs::create_dir_all(&dir)?;
-        let mut shelf = Self { dir, limit: limit.max(1), items: Vec::new(), last_hash: None, groups: BTreeMap::new() };
+        let mut shelf = Self {
+            dir,
+            limit: limit.max(1),
+            items: Vec::new(),
+            last_hash: None,
+            groups: BTreeMap::new(),
+            pixel_hashes: HashMap::new(),
+        };
         shelf.load_groups();
         shelf.reload();
         shelf.enforce_limit();
@@ -310,7 +333,37 @@ impl Shelf {
     }
 
     /// Writes an encoded screenshot to disk and puts it on top of the shelf.
+    /// An item showing exactly these pixels, if the shelf already has one.
+    fn find_same(&mut self, enc: &Encoded) -> Option<String> {
+        let candidates: Vec<(String, String)> = self
+            .items
+            .iter()
+            .filter(|i| i.width == enc.width && i.height == enc.height)
+            .map(|i| (i.id.clone(), i.path.clone()))
+            .collect();
+        for (id, path) in candidates {
+            let hash = match self.pixel_hashes.get(&id) {
+                Some(h) => *h,
+                None => {
+                    let Ok(img) = image::open(&path) else { continue };
+                    let img = img.into_rgba8();
+                    let h = pixel_hash(img.width(), img.height(), img.as_raw());
+                    self.pixel_hashes.insert(id.clone(), h);
+                    h
+                }
+            };
+            if hash == enc.pixels {
+                return Some(id);
+            }
+        }
+        None
+    }
+
+    /// Writes an encoded screenshot to disk and puts it on top of the shelf.
+    /// The same picture already on the shelf is replaced: only the newest
+    /// copy stays (in the old one's group, if it had one).
     pub fn insert(&mut self, enc: Encoded, now_ms: u64) -> Result<ShelfItem, String> {
+        let same = self.find_same(&enc);
         let mut stem = format!("{PREFIX}{now_ms:013}");
         let mut n = 1;
         while self.paths(&stem).0.exists() {
@@ -331,7 +384,17 @@ impl Shelf {
             created_at: now_ms,
             group: None,
         };
+        self.pixel_hashes.insert(item.id.clone(), enc.pixels);
         self.items.insert(0, item.clone());
+        let mut item = item;
+        if let Some(old) = same {
+            if let Some(group) = self.groups.get(&old).cloned() {
+                self.groups.insert(item.id.clone(), group.clone());
+                item.group = Some(group);
+                self.sync_group_fields();
+            }
+            self.remove(&old);
+        }
         self.enforce_limit();
         Ok(item)
     }
@@ -348,6 +411,7 @@ impl Shelf {
         let item = self.items.remove(pos);
         let _ = fs::remove_file(&item.path);
         let _ = fs::remove_file(&item.thumb_path);
+        self.pixel_hashes.remove(id);
         if self.groups.remove(id).is_some() {
             self.dissolve_singletons();
             self.sync_group_fields();
@@ -539,6 +603,34 @@ mod tests {
         let item = shelf.insert(again, 50).unwrap();
         assert_eq!(fs::read(&item.path).unwrap(), png);
         assert!(encode_png(b"not a png").is_err());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn same_picture_replaces_the_old_copy_and_keeps_its_group() {
+        let dir = temp_dir("dedupe");
+        let mut shelf = Shelf::open(&dir, 10).unwrap();
+        let a = shelf.add_rgba(6, 4, pixels(6, 4, 1), 1).unwrap().unwrap();
+        let b = shelf.add_rgba(6, 4, pixels(6, 4, 2), 2).unwrap().unwrap();
+        let gid = shelf.group(&[a.id.clone()], &b.id, 3).unwrap();
+        shelf.add_rgba(6, 4, pixels(6, 4, 3), 4).unwrap();
+        // The same pixels as `a` again (e.g. copied once more, or saved from
+        // the editor with another PNG encoder).
+        let png = encode(6, 4, pixels(6, 4, 1)).unwrap().png;
+        let again = shelf.insert(encode_png(&png).unwrap(), 5).unwrap();
+        assert!(shelf.get(&a.id).is_none(), "old copy removed");
+        assert!(!Path::new(&a.path).exists());
+        assert_eq!(shelf.items()[0].id, again.id, "new copy on top");
+        assert_eq!(again.group.as_deref(), Some(gid.as_str()));
+        assert_eq!(shelf.group_items(&gid).len(), 2);
+        assert_eq!(shelf.items().len(), 3);
+        // After a restart (empty hash cache) duplicates are still found.
+        let mut reopened = Shelf::open(&dir, 10).unwrap();
+        reopened.insert(encode(6, 4, pixels(6, 4, 3)).unwrap(), 6).unwrap();
+        assert_eq!(reopened.items().len(), 3);
+        // Same size, different pixels: kept.
+        reopened.insert(encode(6, 4, pixels(6, 4, 9)).unwrap(), 7).unwrap();
+        assert_eq!(reopened.items().len(), 4);
         fs::remove_dir_all(&dir).unwrap();
     }
 }

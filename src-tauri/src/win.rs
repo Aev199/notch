@@ -14,7 +14,8 @@ mod imp {
     use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY,
-        VK_CONTROL, VK_LBUTTON, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_V,
+        VK_C, VK_CONTROL, VK_INSERT, VK_LBUTTON, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RBUTTON, VK_RMENU,
+        VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_V, VK_X,
     };
     use windows_sys::Win32::UI::Shell::{
         SHQueryUserNotificationState, QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
@@ -216,6 +217,49 @@ mod imp {
         sent as usize == inputs.len()
     }
 
+    /// A copy chord is held right now: Ctrl+C, Ctrl+X or Ctrl+Insert.
+    pub fn copy_keys_down() -> bool {
+        key_down(VK_CONTROL) && (key_down(VK_C) || key_down(VK_X) || key_down(VK_INSERT))
+    }
+
+    pub fn right_button_down() -> bool {
+        key_down(VK_RBUTTON)
+    }
+
+    /// File name (lower case) of the program that put the current data on
+    /// the clipboard, e.g. `excel.exe`.
+    pub fn clipboard_owner_exe() -> Option<String> {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::DataExchange::GetClipboardOwner;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        unsafe {
+            let owner = GetClipboardOwner();
+            if owner.is_null() {
+                return None;
+            }
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(owner, &mut pid);
+            if pid == 0 {
+                return None;
+            }
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if process.is_null() {
+                return None;
+            }
+            let mut buf = [0u16; 512];
+            let mut len = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(process, 0, buf.as_mut_ptr(), &mut len) != 0;
+            CloseHandle(process);
+            if !ok {
+                return None;
+            }
+            let path = String::from_utf16_lossy(&buf[..len as usize]);
+            path.rsplit(['\\', '/']).next().map(|n| n.to_lowercase())
+        }
+    }
+
     /// Password managers mark secrets with these formats; such clipboard
     /// content must not be recorded.
     pub fn clipboard_marked_private() -> bool {
@@ -390,6 +434,15 @@ mod imp {
     }
     pub fn clipboard_marked_private() -> bool {
         false
+    }
+    pub fn copy_keys_down() -> bool {
+        false
+    }
+    pub fn right_button_down() -> bool {
+        false
+    }
+    pub fn clipboard_owner_exe() -> Option<String> {
+        None
     }
     pub fn exe_version(_: &std::path::Path) -> Option<String> {
         None

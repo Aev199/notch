@@ -18,8 +18,17 @@ use crate::win;
 const DOUBLE_COPY_MIN_MS: u64 = 60;
 const DOUBLE_COPY_MAX_MS: u64 = 450;
 
+/// Office programs also fill the clipboard for Format Painter ("Формат по
+/// образцу"), which is not a copy the user wants to keep.
+const OFFICE: [&str; 4] = ["excel.exe", "winword.exe", "powerpnt.exe", "onenote.exe"];
+/// A copy chord this recent counts as "the user pressed Ctrl+C".
+const KEYS_RECENT_MS: u64 = 1_500;
+/// A right click this recent counts as "copied from the context menu".
+const MENU_RECENT_MS: u64 = 10_000;
+
 struct Handler {
     app: AppHandle,
+    /// Last text with its time; only copies made with the keyboard.
     last_text: Option<(String, u64)>,
 }
 
@@ -44,13 +53,23 @@ impl Handler {
         if win::clipboard_marked_private() {
             return;
         }
+        let keyboard = win::copy_keys_down()
+            || now.saturating_sub(shared.last_copy_keys.load(Ordering::Relaxed)) < KEYS_RECENT_MS;
+        let context_menu = now.saturating_sub(shared.last_right_click.load(Ordering::Relaxed)) < MENU_RECENT_MS;
+        if !keyboard && !context_menu {
+            if let Some(owner) = win::clipboard_owner_exe() {
+                if OFFICE.contains(&owner.as_str()) {
+                    return;
+                }
+            }
+        }
         // The source app may still be rendering formats; give it a moment.
         std::thread::sleep(Duration::from_millis(40));
         let Ok(mut clipboard) = arboard::Clipboard::new() else { return };
 
         if let Ok(text) = clipboard.get_text() {
             if !text.trim().is_empty() {
-                self.on_text(&shared, &text, now);
+                self.on_text(&shared, &text, now, keyboard);
                 return;
             }
         }
@@ -77,7 +96,7 @@ impl Handler {
         }
     }
 
-    fn on_text(&mut self, shared: &Shared, text: &str, now: u64) {
+    fn on_text(&mut self, shared: &Shared, text: &str, now: u64, keyboard: bool) {
         let changed = lock(&shared.texts).push(text, now);
         if changed {
             poke(&self.app);
@@ -86,6 +105,12 @@ impl Handler {
             let _ = self.app.emit("captured", "clipboard");
         }
 
+        // Double Ctrl+C: both copies must come from the keyboard, so double
+        // clicks on toolbar buttons (Format Painter) never translate.
+        if !keyboard {
+            self.last_text = None;
+            return;
+        }
         let normalized = normalize(text);
         let double = matches!(&self.last_text, Some((prev, at))
             if *prev == normalized && (DOUBLE_COPY_MIN_MS..=DOUBLE_COPY_MAX_MS).contains(&now.saturating_sub(*at)));

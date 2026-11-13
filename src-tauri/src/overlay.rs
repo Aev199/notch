@@ -63,6 +63,14 @@ fn run(app: AppHandle) {
             crate::wake::notify("clock gap");
         }
         last_tick = tick;
+        // How the user copies (keys, context menu) tells a real copy from
+        // Office's Format Painter, which also fills the clipboard.
+        if win::copy_keys_down() {
+            shared.last_copy_keys.store(tick, Ordering::Relaxed);
+        }
+        if win::right_button_down() {
+            shared.last_right_click.store(tick, Ordering::Relaxed);
+        }
 
         if last_slow.elapsed() >= SLOW_EVERY {
             last_slow = Instant::now();
