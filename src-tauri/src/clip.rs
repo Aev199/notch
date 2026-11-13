@@ -3,6 +3,7 @@
 //! to the screenshot shelf.
 
 use clipboard_master::{CallbackResult, ClipboardHandler, Master};
+use notch_core::clipboard::is_object_copy;
 use notch_core::shelf;
 use notch_core::text_history::normalize;
 use std::io;
@@ -75,6 +76,13 @@ impl Handler {
         }
         if !lock(&shared.settings).capture_images {
             return;
+        }
+        // Only screenshots go to the shelf: a copy of AutoCAD entities, Excel
+        // cells or Office shapes carries a rendered picture too, along with
+        // its document formats. Unreadable clipboard: skip rather than guess.
+        match win::clipboard_formats() {
+            Some(formats) if !is_object_copy(formats.iter().map(|(id, name)| (*id, name.as_str()))) => {}
+            _ => return,
         }
         if let Ok(img) = clipboard.get_image() {
             let (w, h) = (img.width as u32, img.height as u32);

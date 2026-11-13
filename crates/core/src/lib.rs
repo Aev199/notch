@@ -4,6 +4,7 @@
 //! on any OS. The Tauri shell (`src-tauri`) wires these pieces to the real
 //! clipboard, window and network.
 
+pub mod clipboard;
 pub mod hover;
 pub mod ocr;
 pub mod settings;

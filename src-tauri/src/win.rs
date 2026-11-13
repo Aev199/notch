@@ -217,6 +217,45 @@ mod imp {
         sent as usize == inputs.len()
     }
 
+    /// Every format on the clipboard as (id, registered name or ""). `None`
+    /// when the clipboard stays busy (another program holds it open).
+    pub fn clipboard_formats() -> Option<Vec<(u32, String)>> {
+        use windows_sys::Win32::System::DataExchange::{
+            CloseClipboard, EnumClipboardFormats, GetClipboardFormatNameW, OpenClipboard,
+        };
+        unsafe {
+            let mut opened = false;
+            for _ in 0..8 {
+                if OpenClipboard(std::ptr::null_mut()) != 0 {
+                    opened = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            if !opened {
+                return None;
+            }
+            let mut out = Vec::new();
+            let mut format = 0u32;
+            loop {
+                format = EnumClipboardFormats(format);
+                if format == 0 {
+                    break;
+                }
+                let mut name = [0u16; 128];
+                // Registered formats (0xC000+) have names; standard ones do not.
+                let len = if format >= 0xC000 {
+                    GetClipboardFormatNameW(format, name.as_mut_ptr(), name.len() as i32).max(0) as usize
+                } else {
+                    0
+                };
+                out.push((format, String::from_utf16_lossy(&name[..len])));
+            }
+            CloseClipboard();
+            Some(out)
+        }
+    }
+
     /// A copy chord is held right now: Ctrl+C, Ctrl+X or Ctrl+Insert.
     pub fn copy_keys_down() -> bool {
         key_down(VK_CONTROL) && (key_down(VK_C) || key_down(VK_X) || key_down(VK_INSERT))
@@ -437,6 +476,9 @@ mod imp {
     }
     pub fn copy_keys_down() -> bool {
         false
+    }
+    pub fn clipboard_formats() -> Option<Vec<(u32, String)>> {
+        Some(Vec::new())
     }
     pub fn right_button_down() -> bool {
         false
