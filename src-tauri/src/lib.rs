@@ -283,6 +283,12 @@ fn shelf_remove(id: String, app: AppHandle, state: State<'_, Shared>) {
     state::emit_shelf(&app);
 }
 
+/// "Take the picture from the clipboard" on the shelf.
+#[tauri::command]
+async fn shelf_from_clipboard(app: AppHandle) -> Result<(), String> {
+    clip::image_to_shelf(&app)
+}
+
 /// Clears the loose screenshots; groups stay unless `everything`.
 #[tauri::command]
 fn shelf_clear(everything: bool, app: AppHandle, state: State<'_, Shared>) {
@@ -510,6 +516,7 @@ pub fn run() {
             shelf_remove,
             pin_entry,
             shelf_clear,
+            shelf_from_clipboard,
             shelf_group,
             shelf_ungroup,
             shelf_remove_group,

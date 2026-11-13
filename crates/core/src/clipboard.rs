@@ -35,6 +35,65 @@ const OBJECT_NAMES: [&str; 16] = [
     "hyperlink",
 ];
 
+/// Raster picture files put on the clipboard next to a copied picture
+/// (Office, browsers, image viewers). Previews of copied objects never have them.
+const PICTURE_NAMES: [&str; 6] = ["png", "jfif", "gif", "image/png", "image/jpeg", "image/gif"];
+
+/// Image programs: whatever they copy is a picture.
+const IMAGE_APPS: [&str; 16] = [
+    "mspaint.exe",
+    "paintdotnet.exe",
+    "photoshop.exe",
+    "gimp",
+    "snippingtool.exe",
+    "screenclippinghost.exe",
+    "sharex.exe",
+    "greenshot.exe",
+    "lightshot.exe",
+    "i_view64.exe",
+    "i_view32.exe",
+    "microsoft.photos.exe",
+    "photosapp.exe",
+    "xnview",
+    "faststone",
+    "krita.exe",
+];
+
+/// CAD programs: their pictures are previews of copied entities, never wanted.
+const CAD_APPS: [&str; 10] = [
+    "acad.exe",
+    "acadlt.exe",
+    "nanocad.exe",
+    "ncad.exe",
+    "bricscad.exe",
+    "zwcad.exe",
+    "revit.exe",
+    "sldworks.exe",
+    "inventor.exe",
+    "compas",
+];
+
+fn matches_app(list: &[&str], exe: &str) -> bool {
+    let exe = exe.to_ascii_lowercase();
+    list.iter().any(|a| exe == *a || (!a.ends_with(".exe") && exe.starts_with(a)))
+}
+
+/// Whether a clipboard image belongs on the shelf. `owner`: file name of the
+/// program that filled the clipboard; `formats`: (id, registered name).
+pub fn take_image<'a>(owner: Option<&str>, formats: &[(u32, &'a str)]) -> bool {
+    if let Some(exe) = owner {
+        if matches_app(&CAD_APPS, exe) {
+            return false;
+        }
+        if matches_app(&IMAGE_APPS, exe) {
+            return true;
+        }
+    }
+    let has_picture_file =
+        formats.iter().any(|(_, name)| PICTURE_NAMES.contains(&name.trim().to_ascii_lowercase().as_str()));
+    has_picture_file || !is_object_copy(formats.iter().copied())
+}
+
 /// `formats`: (id, registered name or "") of everything on the clipboard.
 pub fn is_object_copy<'a>(formats: impl IntoIterator<Item = (u32, &'a str)>) -> bool {
     formats.into_iter().any(|(id, name)| {
@@ -86,5 +145,43 @@ mod tests {
         assert!(is_object_copy([(49_600, "Art::GVML ClipFormat"), (CF_DIB, "")]));
         // A bare metafile is a vector drawing from some program too.
         assert!(is_object_copy([(14, ""), (CF_BITMAP, "")]));
+    }
+
+    const EMF: u32 = 14;
+
+    #[test]
+    fn pictures_from_office_and_paint_are_taken() {
+        // Word / PowerPoint / Excel: a copied picture brings PNG/JFIF along
+        // with its OLE and metafile formats.
+        let word_picture = [
+            (49_600, "Art::GVML ClipFormat"),
+            (49_301, "PNG"),
+            (49_302, "JFIF"),
+            (EMF, ""),
+            (CF_BITMAP, ""),
+            (49_166, "Embed Source"),
+            (49_167, "Object Descriptor"),
+        ];
+        assert!(take_image(Some("winword.exe"), &word_picture));
+        assert!(take_image(Some("POWERPNT.EXE"), &[(49_302, "GIF"), (EMF, ""), (CF_DIB, "")]));
+        // Classic Paint: OLE formats, no PNG — taken because it is Paint.
+        let paint = [(49_166, "Embed Source"), (49_167, "Object Descriptor"), (CF_BITMAP, ""), (CF_DIB, "")];
+        assert!(take_image(Some("mspaint.exe"), &paint));
+        assert!(!take_image(Some("someapp.exe"), &paint));
+        assert!(take_image(Some("gimp-2.10.exe"), &[(EMF, ""), (CF_DIB, "")]));
+        // Screenshots, owner unknown or not.
+        assert!(take_image(None, &[(CF_BITMAP, ""), (CF_DIB, ""), (CF_DIBV5, "")]));
+        assert!(take_image(Some("explorer.exe"), &[(CF_DIB, "")]));
+    }
+
+    #[test]
+    fn previews_of_copied_objects_are_not() {
+        let excel_cells = [(49_400, "Biff12"), (CF_UNICODETEXT, ""), (EMF, ""), (CF_BITMAP, ""), (49_166, "Embed Source")];
+        assert!(!take_image(Some("excel.exe"), &excel_cells));
+        // AutoCAD is refused even if some version adds a PNG preview.
+        assert!(!take_image(Some("acad.exe"), &[(49_500, "AutoCAD.r25"), (49_301, "PNG"), (CF_BITMAP, "")]));
+        assert!(!take_image(Some("nanoCAD.exe"), &[(CF_DIB, "")]));
+        // Office shapes without a raster file: a drawing, not a picture.
+        assert!(!take_image(Some("winword.exe"), &[(49_600, "Art::GVML ClipFormat"), (EMF, ""), (CF_DIB, "")]));
     }
 }

@@ -3,7 +3,7 @@
 //! to the screenshot shelf.
 
 use clipboard_master::{CallbackResult, ClipboardHandler, Master};
-use notch_core::clipboard::is_object_copy;
+use notch_core::clipboard::take_image;
 use notch_core::shelf;
 use notch_core::text_history::normalize;
 use std::io;
@@ -77,12 +77,13 @@ impl Handler {
         if !lock(&shared.settings).capture_images {
             return;
         }
-        // Only screenshots go to the shelf: a copy of AutoCAD entities, Excel
-        // cells or Office shapes carries a rendered picture too, along with
-        // its document formats. Unreadable clipboard: skip rather than guess.
-        match win::clipboard_formats() {
-            Some(formats) if !is_object_copy(formats.iter().map(|(id, name)| (*id, name.as_str()))) => {}
-            _ => return,
+        // Screenshots and copied pictures go to the shelf; previews of copied
+        // objects (AutoCAD entities, Excel cells, Office shapes) do not —
+        // see notch_core::clipboard. Unreadable clipboard: skip, not guess.
+        let Some(formats) = win::clipboard_formats() else { return };
+        let formats: Vec<(u32, &str)> = formats.iter().map(|(id, name)| (*id, name.as_str())).collect();
+        if !take_image(win::clipboard_owner_exe().as_deref(), &formats) {
+            return;
         }
         if let Ok(img) = clipboard.get_image() {
             let (w, h) = (img.width as u32, img.height as u32);
@@ -143,6 +144,20 @@ struct TranslateRequest {
 pub fn request_translation(app: &AppHandle, text: String, focus: bool) {
     let _ = app.emit("translate-request", TranslateRequest { text, focus });
     open_island(app, Some("translate"), 8_000, focus);
+}
+
+/// Puts the clipboard picture on the shelf whatever its source (the shelf's
+/// "take from clipboard" button for what the automatic rule skipped).
+pub fn image_to_shelf(app: &AppHandle) -> Result<(), String> {
+    let shared = app.state::<Shared>().inner().clone();
+    let img = arboard::Clipboard::new()
+        .and_then(|mut c| c.get_image())
+        .map_err(|_| "в буфере обмена нет картинки".to_string())?;
+    let (w, h) = (img.width as u32, img.height as u32);
+    let encoded = shelf::encode(w, h, img.bytes.into_owned())?;
+    lock(&shared.shelf).insert(encoded, now_ms())?;
+    emit_shelf(app);
+    Ok(())
 }
 
 /// Current clipboard text, if any.

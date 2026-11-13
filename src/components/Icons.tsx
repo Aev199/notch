@@ -101,3 +101,10 @@ export const SearchIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="m20 20-4.5-4.5" />
   </svg>
 );
+
+export const AddImageIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <rect x="3" y="5" width="13" height="14" rx="2" />
+    <path d="M3 15l4-4 4 4M19 3v6M16 6h6" />
+  </svg>
+);

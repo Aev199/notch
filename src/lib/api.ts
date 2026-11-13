@@ -115,6 +115,7 @@ export const api = {
   shelfCopy: (id: string) => invoke("shelf_copy", { id }),
   shelfRemove: (id: string) => invoke("shelf_remove", { id }),
   shelfClear: (everything = false) => invoke("shelf_clear", { everything }),
+  shelfFromClipboard: () => invoke("shelf_from_clipboard"),
   shelfGroup: (ids: string[], target: string) => invoke<string>("shelf_group", { ids, target }),
   shelfUngroup: (id: string) => invoke("shelf_ungroup", { id }),
   shelfRemoveGroup: (group: string) => invoke("shelf_remove_group", { group }),

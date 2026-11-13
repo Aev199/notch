@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import {
   api,
+  errorText,
   on,
   type IslandEvent,
   type Mode,
@@ -19,7 +20,7 @@ import { Shelf } from "./components/Shelf";
 import { Clipboard } from "./components/Clipboard";
 import { Translate, type Incoming } from "./components/Translate";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { ClipIcon, CloseIcon, GearIcon, ImageIcon } from "./components/Icons";
+import { AddImageIcon, ClipIcon, CloseIcon, GearIcon, ImageIcon } from "./components/Icons";
 import { updatePending } from "./components/Updates";
 
 /** Logical sizes; compact and open must match the backend hitboxes. */
@@ -162,6 +163,15 @@ export default function App() {
                     </button>
                   ))}
                   <span className="push" />
+                  {tab === "shelf" && (
+                    <button
+                      className="icon-btn"
+                      title="Положить на полку картинку из буфера обмена (если она не попала сама)"
+                      onClick={() => void api.shelfFromClipboard().catch((e) => showError(errorText(e)))}
+                    >
+                      <AddImageIcon />
+                    </button>
+                  )}
                   {tab === "shelf" && shelf.some((i) => !i.group) && (
                     <button className="btn" title="Удалить скриншоты вне групп" onClick={() => void api.shelfClear()}>
                       Очистить
