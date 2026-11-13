@@ -173,6 +173,22 @@ async fn shelf_image(id: String, state: State<'_, Shared>) -> Result<tauri::ipc:
     std::fs::read(&path).map(tauri::ipc::Response::new).map_err(|e| e.to_string())
 }
 
+/// The picture on the clipboard for pasting into the editor: 8 bytes of
+/// width and height (u32 LE), then RGBA pixels.
+#[tauri::command]
+async fn clipboard_image() -> Result<tauri::ipc::Response, String> {
+    let img = arboard::Clipboard::new()
+        .and_then(|mut c| c.get_image())
+        .map_err(|_| "в буфере обмена нет картинки".to_string())?;
+    let mut out = Vec::with_capacity(8 + img.bytes.len());
+    out.extend_from_slice(&(img.width as u32).to_le_bytes());
+    out.extend_from_slice(&(img.height as u32).to_le_bytes());
+    out.extend_from_slice(&img.bytes);
+    Ok(tauri::ipc::Response::new(out))
+}
+
+/// Recognises text on an image sent as raw PNG (the editor sends the
+/// current crop of the screenshot, so only that area is read).
 #[tauri::command]
 async fn ocr_png(request: tauri::ipc::Request<'_>) -> Result<ocr::OcrText, String> {
     let tauri::ipc::InvokeBody::Raw(png) = request.body() else {
