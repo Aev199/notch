@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { api, errorText, timeAgo, type TextEntry } from "../lib/api";
+import { api, errorText, previewText, timeAgo, type TextEntry } from "../lib/api";
 import { CloseIcon, InsertIcon, PinIcon, SearchIcon } from "./Icons";
 
 interface Props {
@@ -64,7 +64,7 @@ export function Clipboard({ entries, onError }: Props) {
             onClick={() => void api.copyEntry(entry.id, true).catch((e) => onError(errorText(e)))}
           >
             {entry.pinned && <PinIcon className="pin-mark" width={12} height={12} />}
-            <span className="clip-text">{entry.text}</span>
+            <span className="clip-text">{previewText(entry.text)}</span>
             <span className="clip-meta">{timeAgo(entry.copied_at)}</span>
             <span className="clip-actions">
               <button

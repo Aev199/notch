@@ -57,6 +57,7 @@ features = [
   "Win32_System_RemoteDesktop",
   "Win32_System_SystemServices",
   "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
 ]
 
 [profile.release]

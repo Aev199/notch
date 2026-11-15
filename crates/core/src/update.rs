@@ -14,6 +14,14 @@ use std::path::{Path, PathBuf};
 pub const REPOSITORY: &str = "Aev199/notch";
 pub const EXE_ASSET: &str = "notch.exe";
 pub const MANIFEST_ASSET: &str = "latest.json";
+/// Ed25519 signature of `latest.json` (64 raw bytes), made by the release
+/// workflow when the repository has the `NOTCH_SIGNING_KEY` secret.
+pub const SIGNATURE_ASSET: &str = "latest.json.sig";
+/// Ed25519 public key (64 hex digits) the releases are signed with. While it
+/// is empty, releases are accepted on their SHA-256 alone — that catches a
+/// broken download but not a replaced release. See "Подпись выпусков" in the
+/// README for how to turn signing on.
+pub const PUBLIC_KEY: &str = "";
 
 /// "v0.1.44" / "0.1.44-dev" → [0, 1, 44].
 pub fn parse_version(text: &str) -> Vec<u64> {
@@ -52,6 +60,8 @@ pub struct Candidate {
     pub page: String,
     pub exe_url: String,
     pub manifest_url: String,
+    /// `latest.json.sig`, when the release has one.
+    pub signature_url: Option<String>,
 }
 
 /// The newest complete (EXE + manifest), final release in GitHub's list.
@@ -65,6 +75,7 @@ pub fn pick_release(list: &[u8]) -> io::Result<Option<Candidate>> {
             Some(Candidate {
                 exe_url: url(EXE_ASSET)?,
                 manifest_url: url(MANIFEST_ASSET)?,
+                signature_url: url(SIGNATURE_ASSET),
                 version: r.tag_name.trim_start_matches(['v', 'V']).to_string(),
                 page: r.html_url,
             })
@@ -94,10 +105,47 @@ pub fn releases_url() -> String {
     format!("https://api.github.com/repos/{REPOSITORY}/releases?per_page=30")
 }
 
-/// Turns a picked release and its manifest into an update, if newer than `current`.
-pub fn make_update(current: &str, candidate: Candidate, manifest_json: &[u8]) -> io::Result<Option<Update>> {
+fn unhex(text: &str) -> Option<Vec<u8>> {
+    let text = text.trim();
+    if !text.len().is_multiple_of(2) || !text.is_ascii() {
+        return None;
+    }
+    (0..text.len()).step_by(2).map(|i| u8::from_str_radix(&text[i..i + 2], 16).ok()).collect()
+}
+
+/// Checks the Ed25519 `signature` (64 raw bytes, or the same as hex text) of
+/// the manifest bytes against `public_key` (hex).
+pub fn verify_manifest(manifest_json: &[u8], signature: &[u8], public_key: &str) -> io::Result<()> {
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    let bad = |what: &str| io::Error::new(io::ErrorKind::InvalidData, what.to_string());
+    let key: [u8; 32] =
+        unhex(public_key).and_then(|k| k.try_into().ok()).ok_or_else(|| bad("неверный ключ подписи в программе"))?;
+    let key = VerifyingKey::from_bytes(&key).map_err(|_| bad("неверный ключ подписи в программе"))?;
+    let raw: Vec<u8> = if signature.len() == 64 {
+        signature.to_vec()
+    } else {
+        std::str::from_utf8(signature).ok().and_then(unhex).unwrap_or_default()
+    };
+    let raw: [u8; 64] = raw.try_into().map_err(|_| bad("подпись выпуска повреждена"))?;
+    key.verify(manifest_json, &Signature::from_bytes(&raw)).map_err(|_| bad("подпись выпуска не сошлась"))
+}
+
+/// Turns a picked release and its manifest into an update, if newer than
+/// `current`. With a `public_key` the manifest must carry a valid signature;
+/// the EXE is then tied to it by the SHA-256 inside.
+pub fn make_update(
+    current: &str,
+    candidate: Candidate,
+    manifest_json: &[u8],
+    signature: Option<&[u8]>,
+    public_key: &str,
+) -> io::Result<Option<Update>> {
     if compare_versions(&candidate.version, current) != Ordering::Greater {
         return Ok(None);
+    }
+    if !public_key.is_empty() {
+        let signature = signature.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "выпуск не подписан"))?;
+        verify_manifest(manifest_json, signature, public_key)?;
     }
     let manifest: Manifest = serde_json::from_slice(manifest_json).map_err(io::Error::other)?;
     if compare_versions(&manifest.version, &candidate.version) != Ordering::Equal || manifest.sha256.len() != 64 {
@@ -203,8 +251,24 @@ pub fn browser_url() -> String {
     format!("https://github.com/{REPOSITORY}/releases/latest/download/{EXE_ASSET}")
 }
 
-/// The newest `notch*.exe` in `folder` (browsers add " (1)" to repeated
-/// downloads) that is newer than `current`, with its version.
+/// Whether a file in Downloads may be our EXE: `notch.exe`, or the names
+/// browsers give repeated downloads (`notch (1).exe`, `notch(2).exe`). Other
+/// programs whose names merely start the same way (`notchpad-setup.exe`) are
+/// not ours.
+pub fn is_download_name(name: &str) -> bool {
+    let name = name.to_lowercase();
+    let Some(rest) = name.strip_suffix(".exe").and_then(|stem| stem.strip_prefix("notch")) else { return false };
+    let rest = rest.trim_start();
+    rest.is_empty()
+        || rest
+            .strip_prefix('(')
+            .and_then(|r| r.strip_suffix(')'))
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The newest downloaded copy of our EXE in `folder` (see
+/// [`is_download_name`]) that is newer than `current`, with its version.
+/// `version_of` answers only for files that really are Notch.
 pub fn find_downloaded(
     folder: &Path,
     current: &str,
@@ -215,8 +279,7 @@ pub fn find_downloaded(
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| {
-            let name = p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
-            name.starts_with("notch") && name.ends_with(".exe") && p.is_file()
+            p.file_name().is_some_and(|n| is_download_name(&n.to_string_lossy())) && p.is_file()
         })
         .filter_map(|p| version_of(&p).map(|v| (p, v)))
         .filter(|(_, v)| compare_versions(v, current) == Ordering::Greater)
@@ -258,14 +321,49 @@ mod tests {
 
     #[test]
     fn manifest_must_match() {
-        let c = Candidate { version: "0.1.15".into(), page: "p".into(), exe_url: "e".into(), manifest_url: "m".into() };
+        let c = Candidate {
+            version: "0.1.15".into(),
+            page: "p".into(),
+            exe_url: "e".into(),
+            manifest_url: "m".into(),
+            signature_url: None,
+        };
         let good = format!(r#"{{"version":"0.1.15","sha256":"{}","notes":["a"]}}"#, "A".repeat(64));
-        let u = make_update("0.1.11", c.clone(), good.as_bytes()).unwrap().unwrap();
+        let u = make_update("0.1.11", c.clone(), good.as_bytes(), None, "").unwrap().unwrap();
         assert_eq!(u.sha256, "a".repeat(64));
         assert_eq!(u.notes, ["a"]);
-        assert!(make_update("0.1.15", c.clone(), good.as_bytes()).unwrap().is_none());
+        assert!(make_update("0.1.15", c.clone(), good.as_bytes(), None, "").unwrap().is_none());
         let wrong = format!(r#"{{"version":"0.1.14","sha256":"{}"}}"#, "a".repeat(64));
-        assert!(make_update("0.1.11", c, wrong.as_bytes()).is_err());
+        assert!(make_update("0.1.11", c, wrong.as_bytes(), None, "").is_err());
+    }
+
+    #[test]
+    fn signed_manifest_is_required_once_a_key_is_set() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let hex = |b: &[u8]| b.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let signer = SigningKey::from_bytes(&[7u8; 32]);
+        let key = hex(signer.verifying_key().as_bytes());
+        let c = Candidate {
+            version: "0.1.15".into(),
+            page: "p".into(),
+            exe_url: "e".into(),
+            manifest_url: "m".into(),
+            signature_url: Some("s".into()),
+        };
+        let manifest = format!(r#"{{"version":"0.1.15","sha256":"{}"}}"#, "a".repeat(64));
+        let sig = signer.sign(manifest.as_bytes()).to_bytes();
+        let make = |m: &str, s: Option<&[u8]>| make_update("0.1.11", c.clone(), m.as_bytes(), s, &key);
+        assert!(make(&manifest, Some(&sig)).unwrap().is_some());
+        assert!(make(&manifest, Some(hex(&sig).as_bytes())).unwrap().is_some(), "hex text works too");
+        assert!(make(&manifest, None).is_err(), "unsigned release");
+        // Another hash in the manifest (a replaced EXE): the signature no longer fits.
+        assert!(make(&manifest.replace('a', "b"), Some(&sig)).is_err());
+        let other = SigningKey::from_bytes(&[8u8; 32]).sign(manifest.as_bytes()).to_bytes();
+        assert!(make(&manifest, Some(&other)).is_err(), "signed with another key");
+        assert!(make(&manifest, Some(b"short")).is_err());
+        assert!(verify_manifest(manifest.as_bytes(), &sig, "not a key").is_err());
+        // An older release is "nothing new", signed or not.
+        assert!(make_update("0.1.15", c.clone(), manifest.as_bytes(), None, &key).unwrap().is_none());
     }
 
     #[test]
@@ -295,8 +393,16 @@ mod tests {
     #[test]
     fn finds_newer_download() {
         let dir = temp("downloads");
-        for name in ["notch.exe", "notch (1).exe", "Notch (2).exe", "other.exe", "notch.txt"] {
+        let names =
+            ["notch.exe", "notch (1).exe", "Notch (2).exe", "other.exe", "notch.txt", "notchpad-setup.exe", "notch-tool.exe"];
+        for name in names {
             fs::write(dir.join(name), b"MZ").unwrap();
+        }
+        for (name, ours) in [("notch.exe", true), ("Notch(3).EXE", true), ("notch (12).exe", true), ("notch ().exe", false)] {
+            assert_eq!(is_download_name(name), ours, "{name}");
+        }
+        for name in ["notchpad-setup.exe", "notch-tool.exe", "notch (1) copy.exe", "notch.old.exe", "notch.txt"] {
+            assert!(!is_download_name(name), "{name}");
         }
         let version = |p: &Path| -> Option<String> {
             match p.file_name()?.to_str()? {

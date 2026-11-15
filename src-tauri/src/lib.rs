@@ -256,7 +256,7 @@ async fn editor_result(request: tauri::ipc::Request<'_>, app: AppHandle, state: 
         return Err("редактор прислал не картинку".into());
     };
     let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
-    let encoded = notch_core::shelf::encode_png(png)?;
+    let (encoded, rgba) = notch_core::shelf::encode_png_rgba(png)?;
     let (w, h) = (encoded.width, encoded.height);
     if header("x-notch-action") == "save" {
         let source = header("x-notch-source");
@@ -264,17 +264,12 @@ async fn editor_result(request: tauri::ipc::Request<'_>, app: AppHandle, state: 
         let group = shelf.get(&source).and_then(|i| i.group.clone());
         let item = shelf.insert(encoded, state::now_ms())?;
         if let Some(group) = group {
-            let _ = shelf.group(&[item.id.clone()], &group, state::now_ms());
+            let _ = shelf.group(std::slice::from_ref(&item.id), &group, state::now_ms());
         }
         drop(shelf);
         state::emit_shelf(&app);
     }
-    let rgba = image_rgba(png)?;
     clip::write_image(&state, w, h, rgba)
-}
-
-fn image_rgba(png: &[u8]) -> Result<Vec<u8>, String> {
-    notch_core::shelf::decode_png(png).map(|(_, _, rgba)| rgba)
 }
 
 #[tauri::command]
@@ -440,7 +435,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn load_state() -> App {
-    let fallback = std::env::temp_dir().join("Notch");
+    let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    let fallback = settings::fallback_dir(local.as_deref(), &std::env::temp_dir());
     let data_dir = settings::data_dir(&exe_path(), &fallback);
     let settings = Settings::load(&data_dir.join(SETTINGS_FILE));
     let read = |file: &str| -> Vec<TextEntry> {

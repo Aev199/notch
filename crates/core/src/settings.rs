@@ -123,6 +123,21 @@ pub fn data_dir(exe: &Path, fallback: &Path) -> PathBuf {
     fallback.to_path_buf()
 }
 
+/// Where the data goes when the folder of the executable is read-only:
+/// `%LOCALAPPDATA%\Notch`. Earlier versions used `%TEMP%\Notch`, which Windows
+/// cleans up by itself (settings and pinned entries vanished with it); data
+/// found there moves over. Without `local_app_data`, or if the move fails,
+/// the old place stays in use.
+pub fn fallback_dir(local_app_data: Option<&Path>, temp: &Path) -> PathBuf {
+    let old = temp.join("Notch");
+    let Some(local) = local_app_data else { return old };
+    let new = local.join("Notch");
+    if old.is_dir() && !new.exists() && fs::rename(&old, &new).is_err() {
+        return old;
+    }
+    new
+}
+
 pub fn shelf_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("cache").join("shelf")
 }
@@ -143,9 +158,7 @@ mod tests {
         let dir = temp("rt");
         let path = dir.join(SETTINGS_FILE);
         assert_eq!(Settings::load(&path), Settings::default());
-        let mut s = Settings::default();
-        s.provider = Provider::Deepl;
-        s.deepl_key = " key:fx ".into();
+        let s = Settings { provider: Provider::Deepl, deepl_key: " key:fx ".into(), ..Default::default() };
         s.save(&path).unwrap();
         let loaded = Settings::load(&path);
         assert_eq!(loaded.provider, Provider::Deepl);
@@ -177,6 +190,26 @@ mod tests {
         assert_eq!(data_dir(&exe, &fallback), dir);
         assert_eq!(shelf_dir(&dir), dir.join("cache").join("shelf"));
         assert_eq!(data_dir(Path::new("/proc/notch.exe"), &fallback), fallback);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn fallback_moves_out_of_temp() {
+        let dir = temp("fallback");
+        let (temp_dir, local) = (dir.join("temp"), dir.join("local"));
+        fs::create_dir_all(&local).unwrap();
+        assert_eq!(fallback_dir(None, &temp_dir), temp_dir.join("Notch"));
+        assert_eq!(fallback_dir(Some(&local), &temp_dir), local.join("Notch"));
+        // Data left in %TEMP% by an older version comes along.
+        fs::create_dir_all(temp_dir.join("Notch")).unwrap();
+        fs::write(temp_dir.join("Notch").join(PINS_FILE), b"[]").unwrap();
+        assert_eq!(fallback_dir(Some(&local), &temp_dir), local.join("Notch"));
+        assert!(local.join("Notch").join(PINS_FILE).exists());
+        assert!(!temp_dir.join("Notch").exists());
+        // Both exist: the new place wins, the old one is left alone.
+        fs::create_dir_all(temp_dir.join("Notch")).unwrap();
+        assert_eq!(fallback_dir(Some(&local), &temp_dir), local.join("Notch"));
+        assert!(temp_dir.join("Notch").exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 }

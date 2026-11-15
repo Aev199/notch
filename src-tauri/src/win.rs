@@ -309,12 +309,53 @@ mod imp {
                     return true;
                 }
             }
+            // Windows' own opt-out of the clipboard history (Win+V) and of
+            // cloud sync: a DWORD under these names, 0 = "keep it out". A
+            // value that cannot be read counts as 0: programs put these
+            // formats there to hide something, not to allow it.
+            for name in ["CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"] {
+                let fmt = RegisterClipboardFormatW(wide(name).as_ptr());
+                if fmt != 0 && IsClipboardFormatAvailable(fmt) != 0 && clipboard_dword(fmt).unwrap_or(0) == 0 {
+                    return true;
+                }
+            }
             false
         }
     }
 
-    /// The version in an EXE's file properties ("0.1.47").
-    pub fn exe_version(path: &std::path::Path) -> Option<String> {
+    /// The first four bytes of a clipboard format's data. `None` when the
+    /// clipboard is busy or the data is missing.
+    unsafe fn clipboard_dword(format: u32) -> Option<u32> {
+        use windows_sys::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
+        use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+        let mut opened = false;
+        for _ in 0..4 {
+            if OpenClipboard(std::ptr::null_mut()) != 0 {
+                opened = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        if !opened {
+            return None;
+        }
+        let mut value = None;
+        let handle = GetClipboardData(format);
+        if !handle.is_null() && GlobalSize(handle) >= 4 {
+            let data = GlobalLock(handle);
+            if !data.is_null() {
+                value = Some(std::ptr::read_unaligned(data as *const u32));
+                GlobalUnlock(handle);
+            }
+        }
+        CloseClipboard();
+        value
+    }
+
+    /// The version in an EXE's file properties ("0.1.47") — only if the same
+    /// properties name the program `product` (ProductName). Any other EXE,
+    /// whatever its file name, has no version as far as we are concerned.
+    pub fn exe_version(path: &std::path::Path, product: &str) -> Option<String> {
         use std::os::windows::ffi::OsStrExt;
         use windows_sys::Win32::Storage::FileSystem::{
             GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO,
@@ -327,6 +368,33 @@ mod imp {
             }
             let mut data = vec![0u8; size as usize];
             if GetFileVersionInfoW(name.as_ptr(), 0, size, data.as_mut_ptr().cast()) == 0 {
+                return None;
+            }
+            // Languages the strings are stored under, then the usual ones
+            // (Tauri writes "language neutral, Unicode").
+            let mut blocks: Vec<(u16, u16)> = Vec::new();
+            let mut found: *mut c_void = std::ptr::null_mut();
+            let mut size = 0u32;
+            let translation = wide(r"\VarFileInfo\Translation");
+            if VerQueryValueW(data.as_ptr().cast(), translation.as_ptr(), &mut found, &mut size) != 0 && !found.is_null() {
+                let words = found as *const u16;
+                for i in 0..(size as usize / 4) {
+                    blocks.push((std::ptr::read_unaligned(words.add(i * 2)), std::ptr::read_unaligned(words.add(i * 2 + 1))));
+                }
+            }
+            blocks.extend([(0, 0x04b0), (0x0409, 0x04b0)]);
+            let ours = blocks.iter().any(|(language, codepage)| {
+                let key = wide(&format!(r"\StringFileInfo\{language:04x}{codepage:04x}\ProductName"));
+                let mut text: *mut c_void = std::ptr::null_mut();
+                let mut chars = 0u32;
+                if VerQueryValueW(data.as_ptr().cast(), key.as_ptr(), &mut text, &mut chars) == 0 || text.is_null() {
+                    return false;
+                }
+                let name: Vec<u16> =
+                    (0..chars as usize).map(|i| std::ptr::read_unaligned((text as *const u16).add(i))).collect();
+                String::from_utf16_lossy(&name).trim_end_matches('\0').trim().eq_ignore_ascii_case(product)
+            });
+            if !ours {
                 return None;
             }
             let root = [u16::from(b'\\'), 0];
@@ -486,7 +554,7 @@ mod imp {
     pub fn clipboard_owner_exe() -> Option<String> {
         None
     }
-    pub fn exe_version(_: &std::path::Path) -> Option<String> {
+    pub fn exe_version(_: &std::path::Path, _: &str) -> Option<String> {
         None
     }
     pub fn downloads_dir() -> Option<std::path::PathBuf> {

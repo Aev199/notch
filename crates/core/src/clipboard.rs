@@ -80,7 +80,7 @@ fn matches_app(list: &[&str], exe: &str) -> bool {
 
 /// Whether a clipboard image belongs on the shelf. `owner`: file name of the
 /// program that filled the clipboard; `formats`: (id, registered name).
-pub fn take_image<'a>(owner: Option<&str>, formats: &[(u32, &'a str)]) -> bool {
+pub fn take_image(owner: Option<&str>, formats: &[(u32, &str)]) -> bool {
     if let Some(exe) = owner {
         if matches_app(&CAD_APPS, exe) {
             return false;

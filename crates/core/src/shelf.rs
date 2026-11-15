@@ -18,6 +18,10 @@ const THUMB_SUFFIX: &str = ".thumb.png";
 /// Which screenshot belongs to which group (screenshots keep living as
 /// plain PNG files; this small index is all a group is).
 const GROUPS_FILE: &str = "groups.json";
+/// Pixel hash of every screenshot (item id → hex). Without it, finding "the
+/// same picture is already here" after a restart means decoding every PNG of
+/// that size — seconds of work with a shelf of fullscreen 4K screenshots.
+const HASHES_FILE: &str = "hashes.json";
 /// Safety cap for grouped screenshots, which the ring never deletes.
 pub const MAX_GROUPED: usize = 300;
 
@@ -46,7 +50,8 @@ pub struct Shelf {
     last_hash: Option<u64>,
     /// item id → group id
     groups: BTreeMap<String, String>,
-    /// item id → pixel hash, filled lazily (only for same-size candidates).
+    /// item id → pixel hash; kept in `hashes.json`. Screenshots saved by an
+    /// older version get theirs lazily (only same-size candidates).
     pixel_hashes: HashMap<String, [u8; 32]>,
 }
 
@@ -110,6 +115,12 @@ pub fn decode_png(png: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
 /// An edited screenshot arriving as PNG bytes (from the editor window): the
 /// bytes are stored as they are, only the thumbnail and fingerprint are made.
 pub fn encode_png(png: &[u8]) -> Result<Encoded, String> {
+    encode_png_rgba(png).map(|(encoded, _)| encoded)
+}
+
+/// [`encode_png`] that also hands back the decoded RGBA pixels (for the
+/// clipboard), so the PNG is decoded once.
+pub fn encode_png_rgba(png: &[u8]) -> Result<(Encoded, Vec<u8>), String> {
     let img = image::load_from_memory_with_format(png, ImageFormat::Png).map_err(|e| format!("не PNG: {e}"))?;
     let (width, height) = (img.width(), img.height());
     let rgba = img.to_rgba8();
@@ -122,7 +133,22 @@ pub fn encode_png(png: &[u8]) -> Result<Encoded, String> {
     };
     let mut thumb = Vec::new();
     thumb_img.write_to(&mut Cursor::new(&mut thumb), ImageFormat::Png).map_err(|e| e.to_string())?;
-    Ok(Encoded { hash, pixels, width, height, png: png.to_vec(), thumb })
+    Ok((Encoded { hash, pixels, width, height, png: png.to_vec(), thumb }, rgba.into_raw()))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn unhex32(text: &str) -> Option<[u8; 32]> {
+    if text.len() != 64 || !text.is_ascii() {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&text[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(out)
 }
 
 fn data_url(png: &[u8]) -> String {
@@ -144,6 +170,7 @@ impl Shelf {
             pixel_hashes: HashMap::new(),
         };
         shelf.load_groups();
+        shelf.load_hashes();
         shelf.reload();
         shelf.enforce_limit();
         Ok(shelf)
@@ -193,9 +220,34 @@ impl Shelf {
         // Forget index entries whose files are gone.
         let before = self.groups.len();
         self.groups.retain(|id, _| items.iter().any(|i| &i.id == id));
+        let known = self.pixel_hashes.len();
+        self.pixel_hashes.retain(|id, _| items.iter().any(|i| &i.id == id));
         self.items = items;
         if before != self.groups.len() {
             self.save_groups();
+        }
+        if known != self.pixel_hashes.len() {
+            self.save_hashes();
+        }
+    }
+
+    fn load_hashes(&mut self) {
+        let stored: BTreeMap<String, String> = fs::read(self.dir.join(HASHES_FILE))
+            .ok()
+            .and_then(|raw| serde_json::from_slice(&raw).ok())
+            .unwrap_or_default();
+        self.pixel_hashes = stored.into_iter().filter_map(|(id, h)| Some((id, unhex32(&h)?))).collect();
+    }
+
+    fn save_hashes(&self) {
+        let path = self.dir.join(HASHES_FILE);
+        if self.pixel_hashes.is_empty() {
+            let _ = fs::remove_file(path);
+            return;
+        }
+        let stored: BTreeMap<&str, String> = self.pixel_hashes.iter().map(|(id, h)| (id.as_str(), hex(h))).collect();
+        if let Ok(json) = serde_json::to_vec(&stored) {
+            let _ = crate::settings::write_atomic(&path, &json);
         }
     }
 
@@ -332,7 +384,6 @@ impl Shelf {
         self.insert(encoded, now_ms).map(Some)
     }
 
-    /// Writes an encoded screenshot to disk and puts it on top of the shelf.
     /// An item showing exactly these pixels, if the shelf already has one.
     fn find_same(&mut self, enc: &Encoded) -> Option<String> {
         let candidates: Vec<(String, String)> = self
@@ -396,6 +447,7 @@ impl Shelf {
             self.remove(&old);
         }
         self.enforce_limit();
+        self.save_hashes();
         Ok(item)
     }
 
@@ -411,7 +463,9 @@ impl Shelf {
         let item = self.items.remove(pos);
         let _ = fs::remove_file(&item.path);
         let _ = fs::remove_file(&item.thumb_path);
-        self.pixel_hashes.remove(id);
+        if self.pixel_hashes.remove(id).is_some() {
+            self.save_hashes();
+        }
         if self.groups.remove(id).is_some() {
             self.dissolve_singletons();
             self.sync_group_fields();
@@ -429,6 +483,9 @@ impl Shelf {
             let _ = fs::remove_file(&item.thumb_path);
         }
         self.items = kept;
+        let items = &self.items;
+        self.pixel_hashes.retain(|id, _| items.iter().any(|i| &i.id == id));
+        self.save_hashes();
         if everything {
             self.groups.clear();
             self.save_groups();
@@ -568,7 +625,7 @@ mod tests {
         let b = shelf.group(&[ids[2].clone()], &ids[3], 11).unwrap();
         assert_ne!(a, b);
         // Drop group b onto a group member of a: all four end up in a.
-        assert_eq!(shelf.group(&[b.clone()], &ids[0], 12).unwrap(), a);
+        assert_eq!(shelf.group(std::slice::from_ref(&b), &ids[0], 12).unwrap(), a);
         assert_eq!(shelf.group_items(&a).len(), 4);
         assert!(shelf.group_items(&b).is_empty());
         // Drop a loose one onto the group id itself.
@@ -612,7 +669,7 @@ mod tests {
         let mut shelf = Shelf::open(&dir, 10).unwrap();
         let a = shelf.add_rgba(6, 4, pixels(6, 4, 1), 1).unwrap().unwrap();
         let b = shelf.add_rgba(6, 4, pixels(6, 4, 2), 2).unwrap().unwrap();
-        let gid = shelf.group(&[a.id.clone()], &b.id, 3).unwrap();
+        let gid = shelf.group(std::slice::from_ref(&a.id), &b.id, 3).unwrap();
         shelf.add_rgba(6, 4, pixels(6, 4, 3), 4).unwrap();
         // The same pixels as `a` again (e.g. copied once more, or saved from
         // the editor with another PNG encoder).
@@ -624,12 +681,23 @@ mod tests {
         assert_eq!(again.group.as_deref(), Some(gid.as_str()));
         assert_eq!(shelf.group_items(&gid).len(), 2);
         assert_eq!(shelf.items().len(), 3);
-        // After a restart (empty hash cache) duplicates are still found.
+        // After a restart the hashes come from the index: no PNG is decoded.
+        let reopened = Shelf::open(&dir, 10).unwrap();
+        assert_eq!(reopened.pixel_hashes.len(), 3);
+        // An index lost or written by an older version: hashes are worked
+        // out again from the files, duplicates are still found.
+        fs::remove_file(dir.join(HASHES_FILE)).unwrap();
+        let mut reopened_blank = Shelf::open(&dir, 10).unwrap();
+        assert!(reopened_blank.pixel_hashes.is_empty());
+        reopened_blank.insert(encode(6, 4, pixels(6, 4, 2)).unwrap(), 6).unwrap();
+        assert_eq!(reopened_blank.items().len(), 3);
+        assert!(dir.join(HASHES_FILE).exists());
         let mut reopened = Shelf::open(&dir, 10).unwrap();
-        reopened.insert(encode(6, 4, pixels(6, 4, 3)).unwrap(), 6).unwrap();
+        assert_eq!(reopened.pixel_hashes.len(), 3);
+        reopened.insert(encode(6, 4, pixels(6, 4, 3)).unwrap(), 7).unwrap();
         assert_eq!(reopened.items().len(), 3);
         // Same size, different pixels: kept.
-        reopened.insert(encode(6, 4, pixels(6, 4, 9)).unwrap(), 7).unwrap();
+        reopened.insert(encode(6, 4, pixels(6, 4, 9)).unwrap(), 8).unwrap();
         assert_eq!(reopened.items().len(), 4);
         fs::remove_dir_all(&dir).unwrap();
     }

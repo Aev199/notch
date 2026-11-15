@@ -26,9 +26,15 @@ pub struct TextHistory {
     limit: usize,
 }
 
-/// Cleans a copied fragment: trims the ends, strips trailing spaces on every
-/// line, collapses runs of spaces/tabs inside a line into one space and keeps
-/// at most one empty line in a row. Line breaks themselves are preserved.
+/// The cleaned form of a copied fragment: trims the ends, strips trailing
+/// spaces on every line, collapses runs of spaces/tabs inside a line into one
+/// space and keeps at most one empty line in a row. Line breaks themselves are
+/// preserved.
+///
+/// The history does NOT store this form: indentation and tabs matter when the
+/// text is pasted back (code, YAML, spreadsheet cells). It is the key that
+/// tells whether two copies are "the same text", and the form handed to the
+/// translator.
 pub fn normalize(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut blank_run = 0usize;
@@ -84,20 +90,30 @@ impl TextHistory {
         self.entries.first()
     }
 
-    /// Adds a fragment to the top. A duplicate is moved to the top instead of
-    /// being stored twice. Returns `false` when there was nothing to add
-    /// (empty after cleaning, or already the newest entry).
+    /// Adds a fragment to the top, exactly as it was copied (only cut to
+    /// [`MAX_ENTRY_CHARS`]). Texts that differ only in spacing count as the
+    /// same one: the entry moves to the top and takes the newest spelling
+    /// instead of being stored twice. Returns `false` when nothing changed
+    /// (blank text, or exactly the newest entry again).
     pub fn push(&mut self, raw: &str, now_ms: u64) -> bool {
-        let text = normalize(raw);
-        if text.is_empty() {
+        let key = normalize(raw);
+        if key.is_empty() {
             return false;
         }
-        if self.entries.first().is_some_and(|e| e.text == text) {
-            return false;
-        }
-        if let Some(pos) = self.entries.iter().position(|e| e.text == text) {
+        let text = match raw.char_indices().nth(MAX_ENTRY_CHARS) {
+            Some((cut, _)) => raw[..cut].to_string(),
+            None => raw.to_string(),
+        };
+        if let Some(pos) = self.entries.iter().position(|e| normalize(&e.text) == key) {
+            if pos == 0 && self.entries[0].text == text {
+                return false;
+            }
             let mut entry = self.entries.remove(pos);
-            entry.copied_at = now_ms;
+            // The newest entry keeps its time: only its spelling changed.
+            if pos != 0 {
+                entry.copied_at = now_ms;
+            }
+            entry.text = text;
             self.entries.insert(0, entry);
             return true;
         }
@@ -153,12 +169,13 @@ impl TextHistory {
         let mut history = Self::new(limit);
         history.next_id = entries.iter().map(|e| e.id).max().unwrap_or(0) + 1;
         for entry in entries {
-            match history.entries.iter_mut().find(|e| e.text == entry.text) {
+            let key = normalize(&entry.text);
+            match history.entries.iter_mut().find(|e| normalize(&e.text) == key) {
                 Some(existing) => existing.pinned |= entry.pinned,
                 None => history.entries.push(entry),
             }
         }
-        history.entries.sort_by(|a, b| b.copied_at.cmp(&a.copied_at));
+        history.entries.sort_by_key(|e| std::cmp::Reverse(e.copied_at));
         history.enforce_limit();
         history
     }
@@ -190,8 +207,30 @@ mod tests {
         let mut h = TextHistory::new(5);
         assert!(!h.push("   \n\t", 1));
         assert!(h.push("one", 1));
-        assert!(!h.push("  one ", 2));
+        assert!(!h.push("one", 2));
         assert_eq!(h.entries().len(), 1);
+    }
+
+    #[test]
+    fn keeps_the_text_as_copied() {
+        let mut h = TextHistory::new(5);
+        let code = "def f():\r\n\tif x:\r\n\t\treturn  1\r\n";
+        assert!(h.push(code, 1));
+        assert_eq!(h.entries()[0].text, code, "indentation, tabs and line ends survive");
+        // Cells copied from a spreadsheet keep their tabs.
+        assert!(h.push("a\tb\tc", 2));
+        assert_eq!(h.entries()[0].text, "a\tb\tc");
+        // The same text with other spacing is one entry with the newest spelling.
+        let id = h.entries()[0].id;
+        assert!(h.push("  a b  c ", 3));
+        assert_eq!(h.entries().len(), 2);
+        assert_eq!((h.entries()[0].id, h.entries()[0].text.as_str(), h.entries()[0].copied_at), (id, "  a b  c ", 2));
+        assert!(h.push("def f():\n if x:\n  return 1", 4));
+        assert_eq!(h.entries().len(), 2);
+        assert_eq!(h.entries()[0].copied_at, 4);
+        let long = "я".repeat(MAX_ENTRY_CHARS + 50);
+        h.push(&long, 5);
+        assert_eq!(h.entries()[0].text.chars().count(), MAX_ENTRY_CHARS);
     }
 
     #[test]

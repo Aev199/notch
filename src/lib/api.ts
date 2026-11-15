@@ -78,7 +78,6 @@ export interface Snapshot {
   settings: Settings;
   texts: TextEntry[];
   shelf: ShelfItem[];
-  compact: [number, number];
   dataDir: string;
   autostart: boolean;
   mode: Mode;
@@ -152,6 +151,19 @@ export function direction(text: string): [Lang, Lang] {
   const cyr = (text.match(/[Ѐ-ӿ]/g) ?? []).length;
   const lat = (text.match(/[A-Za-z]/g) ?? []).length;
   return cyr > 0 && cyr * 3 >= lat ? ["ru", "en"] : ["en", "ru"];
+}
+
+/**
+ * How a clipboard entry looks in the list: the history keeps the text exactly
+ * as copied (indentation, tabs), the row shows it compactly.
+ */
+export function previewText(text: string): string {
+  return text
+    .split(/\r\n|\r|\n/)
+    .map((line) => line.replace(/[ \t\u00a0]+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, 4)
+    .join("\n");
 }
 
 export function errorText(e: unknown): string {

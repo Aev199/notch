@@ -73,18 +73,38 @@ fn info(app: &AppHandle) -> Info {
     }
 }
 
-/// A newer EXE in Downloads, if any (cheap: reads file properties only).
+/// SHA-256 of a downloaded EXE. The file is some 55 MB and the scan repeats
+/// (every 5 s while the browser downloads, then hourly), so the hash of an
+/// unchanged file is remembered.
+fn file_sha256(path: &Path) -> Option<String> {
+    type Seen = (PathBuf, u64, Option<std::time::SystemTime>, String);
+    static LAST: Mutex<Option<Seen>> = Mutex::new(None);
+    let meta = std::fs::metadata(path).ok()?;
+    let (len, modified) = (meta.len(), meta.modified().ok());
+    if let Some((p, l, m, hash)) = &*lock(&LAST) {
+        if p == path && *l == len && *m == modified && modified.is_some() {
+            return Some(hash.clone());
+        }
+    }
+    let hash = update::sha256_hex(&std::fs::read(path).ok()?);
+    *lock(&LAST) = Some((path.to_path_buf(), len, modified, hash.clone()));
+    Some(hash)
+}
+
+/// A newer Notch EXE in Downloads, if any. Only files named like our
+/// download whose properties say "Notch" count: another program that merely
+/// has a similar name must never be offered as an update.
 fn scan_downloads(app: &AppHandle) -> Option<Update> {
     let folder = win::downloads_dir()?;
     let current = current_version(app);
     let own = exe().ok();
-    let version_of = |p: &Path| if Some(p) == own.as_deref() { None } else { win::exe_version(p) };
+    let product = app.package_info().name.clone();
+    let version_of = |p: &Path| if Some(p) == own.as_deref() { None } else { win::exe_version(p, &product) };
     let (path, version) = update::find_downloaded(&folder, &current, &version_of)?;
-    let bytes = std::fs::read(&path).ok()?;
     Some(Update {
         version,
         notes: Vec::new(),
-        sha256: update::sha256_hex(&bytes),
+        sha256: file_sha256(&path)?,
         source: path.to_string_lossy().into_owned(),
         page: folder.to_string_lossy().into_owned(),
     })
@@ -97,7 +117,13 @@ async fn check_online(app: &AppHandle) -> Result<Option<Update>, String> {
         return Ok(None);
     }
     let manifest = net::get_bytes(&candidate.manifest_url.clone(), None).await?;
-    update::make_update(&current_version(app), candidate, &manifest).map_err(|e| e.to_string())
+    // Fetched only when this build checks signatures (a key is compiled in).
+    let signature = match (&candidate.signature_url, update::PUBLIC_KEY.is_empty()) {
+        (Some(url), false) => Some(net::get_bytes(&url.clone(), None).await?),
+        _ => None,
+    };
+    update::make_update(&current_version(app), candidate, &manifest, signature.as_deref(), update::PUBLIC_KEY)
+        .map_err(|e| e.to_string())
 }
 
 /// Downloads first, then GitHub. `manual`: show "up to date"/errors.
