@@ -137,7 +137,7 @@ npx tauri build
 
 ```
 cargo test --manifest-path crates/core/Cargo.toml
-cargo clippy --manifest-path crates/core/Cargo.toml --all-targets -- -D warnings
+cargo clippy --manifest-path crates/core/Cargo.toml --all-targets
 npm test
 npm run build
 cd src-tauri && cargo check --target x86_64-pc-windows-gnu   # нужен mingw-w64

@@ -28,7 +28,7 @@ pub fn prepare(width: u32, height: u32, rgba: Vec<u8>, max_side: u32) -> Result<
     };
     let (w, h) = buffer.dimensions();
     let mut bgra = buffer.into_raw();
-    for px in bgra.chunks_exact_mut(4) {
+    for px in bgra.as_chunks_mut::<4>().0 {
         px.swap(0, 2);
     }
     Ok((w, h, bgra))
