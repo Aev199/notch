@@ -4,10 +4,13 @@
 //! clipboard — or reads the text in it (OCR) and translates it.
 //!
 //! The window is built on the first use and only hidden afterwards, so the
-//! next captures open at once.
+//! next captures open at once. It never appears through a plain show: it is
+//! shown *cloaked* (see `win::cloak`), the page draws the new picture, and
+//! only then the cloak comes off. So there is no show/hide animation and no
+//! frame of the previous capture flashing by.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use crate::state::{lock, Shared};
 use crate::{clip, state, win};
@@ -16,6 +19,8 @@ pub const LABEL: &str = "capture";
 
 /// A capture is being prepared or shown: further presses do nothing.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
+/// The capture is uncloaked: the user is working in it.
+static ON_SCREEN: AtomicBool = AtomicBool::new(false);
 static STARTED_AT: AtomicU64 = AtomicU64::new(0);
 /// A capture that never reached the screen (the page failed) stops blocking
 /// new ones after this long.
@@ -26,8 +31,10 @@ const STUCK_MS: u64 = 4_000;
 pub fn start(app: &AppHandle) {
     let now = state::now_ms();
     if ACTIVE.swap(true, Ordering::SeqCst) {
-        let shown = app.get_webview_window(LABEL).is_some_and(|w| w.is_visible().unwrap_or(false));
-        if shown || now.saturating_sub(STARTED_AT.load(Ordering::SeqCst)) < STUCK_MS {
+        // On screen, or still being prepared: one capture at a time. A
+        // preparation that never finished stops blocking after a while.
+        let preparing = now.saturating_sub(STARTED_AT.load(Ordering::SeqCst)) < STUCK_MS;
+        if ON_SCREEN.load(Ordering::SeqCst) || preparing {
             return;
         }
     }
@@ -44,13 +51,15 @@ pub fn start(app: &AppHandle) {
 fn open(app: &AppHandle) -> Result<(), String> {
     let shared = app.state::<Shared>().inner().clone();
     let screen = win::capture_cursor_monitor().ok_or("не удалось снять экран")?;
+    let rect = (screen.x, screen.y, screen.width, screen.height);
     *lock(&shared.capture) = Some(screen);
     if let Some(window) = app.get_webview_window(LABEL) {
         // The page is alive: it loads the new picture and asks to be shown.
+        prepare(&window, rect);
         return window.emit("capture-open", ()).map_err(|e| e.to_string());
     }
     let url = WebviewUrl::App("index.html?capture=1".into());
-    WebviewWindowBuilder::new(app, LABEL, url)
+    let window = WebviewWindowBuilder::new(app, LABEL, url)
         .title("Notch — снимок экрана")
         .decorations(false)
         .shadow(false)
@@ -59,11 +68,49 @@ fn open(app: &AppHandle) -> Result<(), String> {
         .always_on_top(true)
         .visible(false)
         .build()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // The page loads the picture by itself once it starts.
+    prepare(&window, rect);
+    Ok(())
+}
+
+fn hwnd_of(window: &WebviewWindow) -> isize {
+    #[cfg(windows)]
+    {
+        window.hwnd().map(|h| h.0 as isize).unwrap_or(0)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+        0
+    }
+}
+
+/// Puts the window over the captured monitor, shown but cloaked: the page
+/// renders there unseen and uncloaks it with `capture_show`.
+fn prepare(window: &WebviewWindow, (x, y, width, height): (i32, i32, u32, u32)) {
+    let hwnd = hwnd_of(window);
+    win::no_transitions(hwnd);
+    win::cloak(hwnd, true);
+    // Position first: the size is then applied at that monitor's scale.
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+    let _ = window.set_size(PhysicalSize::new(width, height));
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+    let _ = window.show();
+}
+
+/// Off the screen at once (cloak: no hide animation), then really hidden so
+/// it takes no input and gives the focus back.
+fn dismiss(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(LABEL) {
+        win::cloak(hwnd_of(&window), true);
+        let _ = window.hide();
+    }
+    finish(app);
 }
 
 fn finish(app: &AppHandle) {
+    ON_SCREEN.store(false, Ordering::SeqCst);
     *lock(&app.state::<Shared>().capture) = None;
     ACTIVE.store(false, Ordering::SeqCst);
 }
@@ -81,21 +128,16 @@ pub async fn capture_image(state: tauri::State<'_, Shared>) -> Result<tauri::ipc
     Ok(tauri::ipc::Response::new(out))
 }
 
-/// The page has drawn the picture: put the window over the captured monitor.
+/// The page has drawn and presented the new picture: take the cloak off.
 #[tauri::command]
 pub async fn capture_show(app: AppHandle, state: tauri::State<'_, Shared>) -> Result<(), String> {
-    let (x, y, width, height) = {
-        let guard = lock(&state.capture);
-        let screen = guard.as_ref().ok_or("нет снимка экрана")?;
-        (screen.x, screen.y, screen.width, screen.height)
-    };
+    if lock(&state.capture).is_none() {
+        return Err("нет снимка экрана".into());
+    }
     let window = app.get_webview_window(LABEL).ok_or("окно снимка закрыто")?;
-    // Position first: the size is then applied at that monitor's scale.
-    let _ = window.set_position(PhysicalPosition::new(x, y));
-    let _ = window.set_size(PhysicalSize::new(width, height));
-    let _ = window.set_position(PhysicalPosition::new(x, y));
-    window.show().map_err(|e| e.to_string())?;
     let _ = window.set_always_on_top(true);
+    win::cloak(hwnd_of(&window), false);
+    ON_SCREEN.store(true, Ordering::SeqCst);
     let _ = window.set_focus();
     Ok(())
 }
@@ -103,10 +145,7 @@ pub async fn capture_show(app: AppHandle, state: tauri::State<'_, Shared>) -> Re
 /// Done or cancelled: hide the window and forget the picture.
 #[tauri::command]
 pub async fn capture_close(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window(LABEL) {
-        let _ = window.hide();
-    }
-    finish(&app);
+    dismiss(&app);
     Ok(())
 }
 
@@ -114,10 +153,7 @@ pub async fn capture_close(app: AppHandle) -> Result<(), String> {
 /// history; with `translate` the translator opens with it instead.
 #[tauri::command]
 pub async fn capture_text(text: String, translate: bool, app: AppHandle, state: tauri::State<'_, Shared>) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window(LABEL) {
-        let _ = window.hide();
-    }
-    finish(&app);
+    dismiss(&app);
     clip::write_text(&state, &text)?;
     lock(&state.texts).push(&text, state::now_ms());
     state.persist_texts();

@@ -1,26 +1,25 @@
 // The capture window: a frozen picture of one monitor, covering that monitor.
-// The user drags out an area, may draw on it, and sends it to the shelf and
-// the clipboard — or reads the text in it. Marks and the area live in image
-// pixels and are drawn by the editor's renderer, so the result is exactly
-// what was on screen.
+// The user drags out an area, draws on it with the editor's tools, and sends
+// it to the shelf and the clipboard — or reads the text in it. Marks and the
+// area live in image pixels and are drawn by the editor's renderer, so the
+// result is exactly what was on screen.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { api, errorText, on } from "../lib/api";
 import { COLORS, DEFAULT_FONT, DEFAULT_WIDTH, render, textPx, unitOf, type Box, type Pt, type Shape } from "../editor/draw";
 import { ToolIcon } from "../editor/icons";
+import { extendMark, isTiny, MARK_TOOLS, nextFont, nextWidth, startMark, textMark, type MarkTool } from "../editor/marks";
+import { ToolOptions } from "../editor/ToolOptions";
 import { CheckIcon, CloseIcon } from "../components/Icons";
-import { clampBox, moveBox, resizeBox, snap45, HANDLES, type Handle } from "./geometry";
+import { clampBox, moveBox, resizeBox, HANDLES, type Handle } from "./geometry";
 import "./capture.css";
 
-type Tool = "pen" | "line" | "arrow" | "rect" | "marker" | "text";
+/** "select" moves and resizes the area; the rest are the editor's marks. */
+type Tool = "select" | MarkTool;
 
-const TOOLS: { id: Tool; title: string }[] = [
-  { id: "pen", title: "Кисть" },
-  { id: "line", title: "Линия (Shift — по 45°)" },
-  { id: "arrow", title: "Стрелка (Shift — по 45°)" },
-  { id: "rect", title: "Рамка" },
-  { id: "marker", title: "Маркер" },
-  { id: "text", title: "Текст" },
+const TOOLS: { id: Tool; key: string; title: string }[] = [
+  { id: "select", key: "V", title: "Двигать область" },
+  ...MARK_TOOLS,
 ];
 
 type Drag =
@@ -29,31 +28,47 @@ type Drag =
   | { kind: "resize"; handle: Handle; orig: Box }
   | { kind: "draw" };
 
-/** Sizes of the floating bars (CSS px), to keep them on screen. */
-const TOOLBAR = { w: 36, h: (TOOLS.length + 2) * 30 + 12 };
-const ACTIONS = { w: 330, h: 38 };
 const GAP = 8;
+
+/** Resolves after two frames have been presented, or after `ms` at most. */
+function framesPresented(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(resolve, ms);
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        window.clearTimeout(timer);
+        resolve();
+      }),
+    );
+  });
+}
 
 export function Capture() {
   const [img, setImg] = useState<ImageBitmap | null>(null);
   const [sel, setSel] = useState<Box | null>(null);
   const [shapes, setShapes] = useState<Shape[]>([]);
-  const [tool, setTool] = useState<Tool | null>(null);
+  const [redo, setRedo] = useState<Shape[]>([]);
+  const [tool, setTool] = useState<Tool>("select");
   const [color, setColor] = useState(COLORS[0]);
-  const [palette, setPalette] = useState(false);
+  const [width, setWidth] = useState(DEFAULT_WIDTH);
+  const [font, setFont] = useState(DEFAULT_FONT);
   const [text, setText] = useState<{ at: Pt; value: string } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [view, setView] = useState({ w: window.innerWidth, h: window.innerHeight });
+  const [bar, setBar] = useState({ w: 0, h: 0 });
 
   const root = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
   const textField = useRef<HTMLTextAreaElement>(null);
   const drag = useRef<Drag | null>(null);
   const draft = useRef<Shape | null>(null);
   const live = useRef<Box | null>(null);
   const frame = useRef(0);
+  // A new picture was drawn and waits to be shown.
+  const pendingShow = useRef(false);
 
   const unit = img ? unitOf(img.width, img.height) : 1;
   /** Image pixels per CSS pixel. */
@@ -71,14 +86,16 @@ export function Capture() {
       drag.current = null;
       draft.current = null;
       live.current = null;
+      pendingShow.current = true;
       setSel(null);
       setShapes([]);
-      setTool(null);
+      setRedo([]);
+      setTool("select");
       setText(null);
-      setPalette(false);
       setStatus(null);
       setBusy(false);
       setDragging(false);
+      setView({ w: window.innerWidth, h: window.innerHeight });
       // A 4K screen is ~33 MB of pixels: free the previous one right away.
       setImg((old) => {
         old?.close();
@@ -102,8 +119,6 @@ export function Capture() {
   }, [load]);
 
   // ---- drawing -----------------------------------------------------------
-  // Synchronous: the window is hidden while the first frame is drawn, and a
-  // hidden window gets no animation frames.
   const draw = useCallback(() => {
     if (!img || !canvas.current) return;
     const d = draft.current;
@@ -111,57 +126,81 @@ export function Capture() {
     render(canvas.current, img, d ? [...shapes, d] : shapes, area, unit);
   }, [img, shapes, unit]);
 
-  useLayoutEffect(() => {
-    live.current = sel;
-    draw();
-  }, [draw, sel]);
+  // The newest `draw`: a frame queued during a drag must not paint with the
+  // marks of an older render (the finished mark would vanish until the next
+  // redraw).
+  const drawLatest = useRef(draw);
+  drawLatest.current = draw;
 
   /** During a drag: at most one redraw per frame. */
   const schedule = () => {
     cancelAnimationFrame(frame.current);
-    frame.current = requestAnimationFrame(draw);
+    frame.current = requestAnimationFrame(() => drawLatest.current());
   };
 
-  // The picture is on the canvas: now the window may appear.
+  useLayoutEffect(() => {
+    cancelAnimationFrame(frame.current);
+    live.current = sel;
+    draw();
+  }, [draw, sel]);
+
+  // A new picture is on the canvas: once it has really been presented, the
+  // (cloaked) window may appear — never with the previous capture in it.
   useEffect(() => {
-    if (img) void api.captureShow().catch(() => void api.captureClose());
+    if (!img || !pendingShow.current) return;
+    pendingShow.current = false;
+    void framesPresented(300).then(() => api.captureShow().catch(() => void api.captureClose()));
   }, [img]);
+
+  // ---- marks -------------------------------------------------------------
+  const add = (s: Shape) => {
+    setShapes((list) => [...list, s]);
+    setRedo([]);
+  };
+  const undo = () => {
+    const last = shapes[shapes.length - 1];
+    if (!last) return;
+    setShapes(shapes.slice(0, -1));
+    setRedo((r) => [last, ...r]);
+  };
+  const redoOne = () => {
+    const next = redo[0];
+    if (!next) return;
+    setShapes([...shapes, next]);
+    setRedo(redo.slice(1));
+  };
+
+  const commitText = () => {
+    const mark = text && textMark(text.value, text.at, color, font);
+    if (mark) add(mark);
+    setText(null);
+  };
 
   // ---- pointer -----------------------------------------------------------
   const toImage = (e: { clientX: number; clientY: number }): Pt => [e.clientX * k, e.clientY * k];
   const inside = (b: Box, p: Pt) => p[0] >= b.x && p[0] <= b.x + b.w && p[1] >= b.y && p[1] <= b.y + b.h;
 
-  const commitText = () => {
-    if (text && text.value.trim()) {
-      setShapes((s) => [...s, { t: "text", color, font: DEFAULT_FONT, at: text.at, text: text.value.replace(/\s+$/, "") }]);
-    }
-    setText(null);
-  };
-
   const onPointerDown = (e: ReactPointerEvent) => {
     if (e.button !== 0 || !img || busy) return;
-    setPalette(false);
     if (text) {
       commitText();
       return;
     }
     const p = toImage(e);
     const area = live.current;
-    if (!area || (!tool && !inside(area, p))) {
-      drag.current = { kind: "new", start: p };
-    } else if (!tool) {
-      drag.current = { kind: "move", start: p, orig: area };
+    if (!area || tool === "select") {
+      drag.current = area && inside(area, p) ? { kind: "move", start: p, orig: area } : { kind: "new", start: p };
     } else if (tool === "text") {
-      // The new text field takes the focus, not the canvas.
+      // The new text field takes the focus, not the page.
       e.preventDefault();
       setText({ at: p, value: "" });
       return;
+    } else if (tool === "step") {
+      add(startMark("step", p, color, width, shapes)!);
+      return;
     } else {
       drag.current = { kind: "draw" };
-      draft.current =
-        tool === "pen" || tool === "marker"
-          ? { t: tool, color, w: DEFAULT_WIDTH, pts: [p] }
-          : { t: tool, color, w: DEFAULT_WIDTH, a: p, b: p };
+      draft.current = startMark(tool, p, color, width, shapes);
     }
     root.current?.setPointerCapture(e.pointerId);
     setDragging(true);
@@ -181,16 +220,7 @@ export function Capture() {
     if (!d || !img) return;
     const p = toImage(e);
     if (d.kind === "draw") {
-      const s = draft.current;
-      if (!s) return;
-      if (s.t === "pen" || s.t === "marker") {
-        const last = s.pts[s.pts.length - 1];
-        if (Math.hypot(p[0] - last[0], p[1] - last[1]) >= 1.5) s.pts.push(p);
-      } else if (s.t === "line" || s.t === "arrow") {
-        s.b = e.shiftKey ? snap45(s.a, p) : p;
-      } else if (s.t === "rect") {
-        s.b = p;
-      }
+      if (draft.current) extendMark(draft.current, p, e.shiftKey);
     } else if (d.kind === "new") {
       live.current = clampBox({ x: d.start[0], y: d.start[1], w: p[0] - d.start[0], h: p[1] - d.start[1] }, img.width, img.height);
     } else if (d.kind === "move") {
@@ -204,13 +234,13 @@ export function Capture() {
   const onPointerUp = () => {
     const d = drag.current;
     drag.current = null;
+    cancelAnimationFrame(frame.current);
     setDragging(false);
     if (!d) return;
     if (d.kind === "draw") {
       const s = draft.current;
       draft.current = null;
-      const tiny = s && "b" in s && Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]) < 4;
-      if (s && !tiny) setShapes((list) => [...list, s]);
+      if (s && !isTiny(s)) add(s);
       else draw();
       return;
     }
@@ -220,10 +250,12 @@ export function Capture() {
     live.current = next;
     setSel(next);
     draw();
+    // A fresh area: ready to draw on it right away.
+    if (d.kind === "new" && next && !sel) setTool("arrow");
   };
 
   // ---- output ------------------------------------------------------------
-  /** PNG of the area (the whole screen without one); `marks`: what is drawn on it. */
+  /** PNG of the area (the whole screen without one) with `marks` on it. */
   const exportPng = async (marks: Shape[]): Promise<Uint8Array> => {
     if (!img) throw new Error("снимок не загружен");
     const a = sel ?? { x: 0, y: 0, w: img.width, h: img.height };
@@ -234,11 +266,6 @@ export function Capture() {
     if (!blob) throw new Error("не удалось собрать PNG");
     return new Uint8Array(await blob.arrayBuffer());
   };
-
-  const pendingText = (): Shape[] =>
-    text && text.value.trim()
-      ? [{ t: "text", color, font: DEFAULT_FONT, at: text.at, text: text.value.replace(/\s+$/, "") }]
-      : [];
 
   const run = async (job: () => Promise<void>) => {
     if (busy || !img) return;
@@ -252,13 +279,14 @@ export function Capture() {
     }
   };
 
-  /** To the shelf and the clipboard. */
+  /** To the shelf and the clipboard. The window goes first: it is done. */
   const done = () =>
     run(async () => {
       // Text still being typed belongs to the picture too.
-      const png = await exportPng([...shapes, ...pendingText()]);
-      await invoke("editor_result", png, { headers: { "x-notch-action": "save", "x-notch-source": "" } });
+      const typed = text && textMark(text.value, text.at, color, font);
+      const png = await exportPng(typed ? [...shapes, typed] : shapes);
       await api.captureClose();
+      await invoke("editor_result", png, { headers: { "x-notch-action": "save", "x-notch-source": "" } });
     });
 
   /** Reads the text in the area; `translate` sends it to the translator. */
@@ -269,22 +297,31 @@ export function Capture() {
     });
 
   const cancel = () => void api.captureClose();
-  const undo = () => setShapes((list) => list.slice(0, -1));
 
   // ---- keyboard ----------------------------------------------------------
-  const keys = useRef({ done, cancel, undo, img });
-  keys.current = { done, cancel, undo, img };
+  const keys = useRef({ done, cancel, undo, redoOne, img, tool });
+  keys.current = { done, cancel, undo, redoOne, img, tool };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // The text field has its own keys (Enter, Esc).
-      if ((e.target as HTMLElement).closest?.("textarea")) return;
-      const { done, cancel, undo, img } = keys.current;
+      if ((e.target as HTMLElement).closest?.("textarea, select")) return;
+      const { done, cancel, undo, redoOne, img, tool } = keys.current;
       const ctrl = e.ctrlKey || e.metaKey;
       if (e.key === "Escape") cancel();
       else if (e.key === "Enter" || (ctrl && (e.code === "KeyC" || e.code === "KeyS"))) void done();
-      else if (ctrl && e.code === "KeyZ") undo();
+      else if (ctrl && e.code === "KeyZ") (e.shiftKey ? redoOne : undo)();
+      else if (ctrl && e.code === "KeyY") redoOne();
       else if (ctrl && e.code === "KeyA" && img) setSel({ x: 0, y: 0, w: img.width, h: img.height });
-      else return;
+      else if (!ctrl && !e.altKey && (e.code === "BracketLeft" || e.code === "BracketRight")) {
+        const dir = e.code === "BracketRight" ? 1 : -1;
+        if (tool === "text") setFont((f) => nextFont(f, dir));
+        else setWidth((w) => nextWidth(w, dir));
+      } else if (!ctrl && !e.altKey) {
+        const t = TOOLS.find((x) => `Key${x.key}` === e.code);
+        if (t) setTool(t.id);
+        else if (e.code >= "Digit1" && e.code <= "Digit6") setColor(COLORS[Number(e.code.slice(5)) - 1]);
+        else return;
+      } else return;
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
@@ -298,22 +335,34 @@ export function Capture() {
 
   // ---- layout of the floating parts (CSS px) -----------------------------
   const area = sel ? { x: sel.x / k, y: sel.y / k, w: sel.w / k, h: sel.h / k } : null;
-  const right = area ? area.x + area.w : 0;
-  const bottom = area ? area.y + area.h : 0;
-  // Tools: to the right of the area, or inside its right edge at the screen's edge.
-  const toolsLeft = right + GAP + TOOLBAR.w <= view.w ? right + GAP : right - GAP - TOOLBAR.w;
-  const toolsTop = Math.max(GAP, Math.min(bottom - TOOLBAR.h, view.h - TOOLBAR.h - GAP));
-  // Actions: under the area, or inside its bottom edge at the screen's edge.
-  const below = bottom + GAP + ACTIONS.h <= view.h;
-  const actionsTop = below ? bottom + GAP : bottom - GAP - ACTIONS.h;
-  const insetRight = toolsLeft < right && !below ? TOOLBAR.w + GAP * 2 : 0;
-  const actionsLeft = Math.max(GAP, Math.min(right - ACTIONS.w - insetRight, view.w - ACTIONS.w - GAP));
+  const showBar = area && !dragging;
+
+  useLayoutEffect(() => {
+    const el = barRef.current;
+    if (!el) return;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    setBar((b) => (b.w === w && b.h === h ? b : { w, h }));
+  });
+
+  let barLeft = 0;
+  let barTop = 0;
+  if (area) {
+    const right = area.x + area.w;
+    const bottom = area.y + area.h;
+    // Under the area; above it at the bottom of the screen; inside it when
+    // the area fills the screen.
+    if (bottom + GAP + bar.h <= view.h) barTop = bottom + GAP;
+    else if (area.y - GAP - bar.h >= 0) barTop = area.y - GAP - bar.h;
+    else barTop = bottom - GAP - bar.h;
+    barLeft = Math.max(GAP, Math.min(right - bar.w, view.w - bar.w - GAP));
+  }
   const labelTop = area && area.y >= 26 ? area.y - 24 : (area?.y ?? 0) + 6;
 
   return (
     <div
       ref={root}
-      className={`capture${area && !tool ? " can-move" : ""}${tool ? " drawing" : ""}`}
+      className={`capture tool-${tool}`}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -327,7 +376,7 @@ export function Capture() {
 
       {area && !dragging && (
         <div
-          className={`cap-area${tool ? "" : " movable"}`}
+          className={`cap-area${tool === "select" ? " movable" : ""}`}
           style={{ left: area.x, top: area.y, width: area.w, height: area.h }}
         >
           {HANDLES.map((h) => (
@@ -350,7 +399,7 @@ export function Capture() {
             left: text.at[0] / k,
             top: text.at[1] / k,
             color,
-            fontSize: textPx(DEFAULT_FONT, unit) / k,
+            fontSize: textPx(font, unit) / k,
             lineHeight: 1.25,
           }}
           value={text.value}
@@ -367,66 +416,60 @@ export function Capture() {
               setText(null);
             }
           }}
+          onBlur={commitText}
         />
       )}
 
-      {area && !dragging && (
-        <>
-          <div className="cap-bar vertical" style={{ left: toolsLeft, top: toolsTop }} onPointerDown={(e) => e.stopPropagation()}>
+      {showBar && (
+        <div
+          ref={barRef}
+          className="cap-bar"
+          style={{ left: barLeft, top: barTop, maxWidth: view.w - GAP * 2 }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <div className="ed-group">
             {TOOLS.map((t) => (
               <button
                 key={t.id}
-                className={`cap-btn${tool === t.id ? " active" : ""}`}
-                title={tool === t.id ? `${t.title} — нажмите ещё раз, чтобы двигать область` : t.title}
+                className={`ed-tool${tool === t.id ? " active" : ""}`}
+                title={`${t.title} (${t.key})`}
                 onClick={() => {
                   if (text) commitText();
-                  setTool(tool === t.id ? null : t.id);
+                  setTool(t.id);
                 }}
               >
                 <ToolIcon tool={t.id} />
               </button>
             ))}
-            <button className="cap-btn" title="Цвет" onClick={() => setPalette((v) => !v)}>
-              <span className="cap-swatch" style={{ background: color }} />
-            </button>
-            <button className="cap-btn" title="Отменить (Ctrl+Z)" disabled={shapes.length === 0} onClick={undo}>
+          </div>
+          <span className="ed-sep" />
+          <ToolOptions tool={tool} color={color} onColor={setColor} width={width} onWidth={setWidth} font={font} onFont={setFont} />
+          <span className="ed-sep" />
+          <div className="ed-group">
+            <button className="ed-tool" title="Отменить (Ctrl+Z)" disabled={!shapes.length} onClick={undo}>
               <ToolIcon tool="undo" />
             </button>
-            {palette && (
-              <div className="cap-palette">
-                {COLORS.map((c) => (
-                  <button
-                    key={c}
-                    className={`cap-btn${c === color ? " active" : ""}`}
-                    onClick={() => {
-                      setColor(c);
-                      setPalette(false);
-                    }}
-                  >
-                    <span className="cap-swatch" style={{ background: c }} />
-                  </button>
-                ))}
-              </div>
-            )}
+            <button className="ed-tool" title="Повторить (Ctrl+Y)" disabled={!redo.length} onClick={redoOne}>
+              <ToolIcon tool="redo" />
+            </button>
           </div>
-
-          <div className="cap-bar" style={{ left: actionsLeft, top: actionsTop, width: ACTIONS.w }} onPointerDown={(e) => e.stopPropagation()}>
-            <button className="cap-text-btn" disabled={busy} title="Распознать текст в области и положить его в буфер" onClick={() => void readText(false)}>
+          <span className="ed-sep" />
+          <div className="ed-group">
+            <button className="btn" disabled={busy} title="Распознать текст в области и положить его в буфер" onClick={() => void readText(false)}>
               Текст
             </button>
-            <button className="cap-text-btn" disabled={busy} title="Распознать текст в области и перевести" onClick={() => void readText(true)}>
+            <button className="btn" disabled={busy} title="Распознать текст в области и перевести" onClick={() => void readText(true)}>
               Перевести
             </button>
-            <span className="cap-push" />
-            <button className="cap-text-btn primary" disabled={busy} title="На полку и в буфер обмена (Enter)" onClick={() => void done()}>
+            <button className="btn primary" disabled={busy} title="На полку и в буфер обмена (Enter)" onClick={() => void done()}>
               <CheckIcon width={14} height={14} />
               Готово
             </button>
-            <button className="cap-btn" title="Отмена (Esc)" onClick={cancel}>
+            <button className="ed-tool" title="Отмена (Esc)" onClick={cancel}>
               <CloseIcon width={14} height={14} />
             </button>
           </div>
-        </>
+        </div>
       )}
 
       {(status || busy) && <div className={`cap-status${status ? " error" : ""}`}>{status ?? "Секунду…"}</div>}

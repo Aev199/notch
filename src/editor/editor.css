@@ -14,10 +14,11 @@ html.is-editor #root {
 .ed-bar {
   flex: none;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  height: 44px;
-  padding: 0 10px;
+  min-height: 44px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--line);
 }
 

@@ -508,6 +508,27 @@ mod imp {
         }
     }
 
+    /// Hides (`true`) or shows a window through DWM "cloaking": the window
+    /// stays shown and keeps being rendered, it is only not put on screen.
+    /// Showing it again is instant — no show animation, and no stale frame
+    /// from before (it was drawn meanwhile).
+    pub fn cloak(raw: isize, cloaked: bool) {
+        use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK};
+        let value: i32 = cloaked.into();
+        unsafe {
+            DwmSetWindowAttribute(hwnd(raw), DWMWA_CLOAK as _, (&value as *const i32).cast(), 4);
+        }
+    }
+
+    /// Turns off the fade/zoom Windows plays when the window shows or hides.
+    pub fn no_transitions(raw: isize) {
+        use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED};
+        let value: i32 = 1;
+        unsafe {
+            DwmSetWindowAttribute(hwnd(raw), DWMWA_TRANSITIONS_FORCEDISABLED as _, (&value as *const i32).cast(), 4);
+        }
+    }
+
     /// Opens Explorer with the file selected.
     pub fn reveal(path: &str) -> bool {
         use std::os::windows::process::CommandExt;
@@ -657,6 +678,8 @@ mod imp {
     pub fn cursor_monitor() -> Option<(i32, i32, i32, i32, f64)> {
         None
     }
+    pub fn cloak(_: isize, _: bool) {}
+    pub fn no_transitions(_: isize) {}
     pub fn capture_cursor_monitor() -> Option<super::Screen> {
         None
     }

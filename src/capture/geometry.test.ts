@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { clampBox, moveBox, resizeBox, snap45 } from "./geometry";
+import { clampBox, moveBox, resizeBox } from "./geometry";
+import { snap45 } from "../editor/marks";
 
 const W = 1920;
 const H = 1080;

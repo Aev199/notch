@@ -1,6 +1,6 @@
 import type { Tool } from "./Editor";
 
-type IconName = Tool | "line" | "undo" | "redo" | "rotl" | "rotr" | "layer";
+type IconName = Tool | "undo" | "redo" | "rotl" | "rotr" | "layer";
 
 const PATHS: Record<IconName, JSX.Element> = {
   select: <path d="M5 3l14 8-6 1.5L10 19 5 3Z" />,

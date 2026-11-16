@@ -8,9 +8,6 @@ import {
   COLORS,
   DEFAULT_FONT,
   DEFAULT_WIDTH,
-  FONT_SIZES,
-  WIDTH_MAX,
-  WIDTH_MIN,
   bake,
   box,
   cropOf,
@@ -25,24 +22,17 @@ import {
   type Shape,
 } from "./draw";
 import { ToolIcon } from "./icons";
+import { extendMark, isTiny, MARK_TOOLS, nextFont, nextWidth, startMark, textMark, type MarkTool } from "./marks";
+import { ToolOptions } from "./ToolOptions";
 import { CloseIcon } from "../components/Icons";
 
-export type Tool = "select" | "pen" | "marker" | "arrow" | "rect" | "text" | "step" | "blur" | "crop";
+export type Tool = "select" | MarkTool | "crop";
 
 const TOOLS: { id: Tool; key: string; title: string }[] = [
   { id: "select", key: "V", title: "Выбрать и двигать вставленные картинки" },
-  { id: "pen", key: "P", title: "Кисть" },
-  { id: "marker", key: "M", title: "Маркер" },
-  { id: "arrow", key: "A", title: "Стрелка" },
-  { id: "rect", key: "R", title: "Рамка" },
-  { id: "text", key: "T", title: "Текст" },
-  { id: "step", key: "N", title: "Номер шага" },
-  { id: "blur", key: "B", title: "Скрыть (пикселизация)" },
+  ...MARK_TOOLS,
   { id: "crop", key: "C", title: "Обрезать" },
 ];
-
-/** Tools whose stroke width the slider sets. */
-const STROKE_TOOLS: Tool[] = ["pen", "marker", "arrow", "rect", "step", "blur"];
 
 type Job<T> = { state: "idle" } | { state: "busy" } | { state: "done"; value: T } | { state: "error"; message: string };
 
@@ -229,14 +219,11 @@ export function Editor({ initialId }: { initialId: string }) {
       return;
     }
     if (tool === "step") {
-      add({ t: "step", color, w: width, at: p, n: shapes.filter((s) => s.t === "step").length + 1 });
+      add(startMark("step", p, color, width, shapes)!);
       return;
     }
     e.currentTarget.setPointerCapture(e.pointerId);
-    if (tool === "pen" || tool === "marker") draft.current = { t: tool, color, w: width, pts: [p] };
-    else if (tool === "arrow" || tool === "rect") draft.current = { t: tool, color, w: width, a: p, b: p };
-    else if (tool === "blur") draft.current = { t: "blur", w: width, a: p, b: p };
-    else if (tool === "crop") draft.current = { t: "crop", a: p, b: p };
+    draft.current = tool === "crop" ? { t: "crop", a: p, b: p } : startMark(tool, p, color, width, shapes);
     redraw();
   };
 
@@ -270,22 +257,7 @@ export function Editor({ initialId }: { initialId: string }) {
     }
     const d = draft.current;
     if (!d) return;
-    const p = toImage(e);
-    if (d.t === "pen" || d.t === "marker") {
-      const last = d.pts[d.pts.length - 1];
-      if (Math.hypot(p[0] - last[0], p[1] - last[1]) >= 1.5) d.pts.push(p);
-    } else if ("b" in d) {
-      if (e.shiftKey && d.t === "arrow") {
-        // Shift: snap to 45°.
-        const dx = p[0] - d.a[0];
-        const dy = p[1] - d.a[1];
-        const ang = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
-        const len = Math.hypot(dx, dy);
-        d.b = [d.a[0] + Math.cos(ang) * len, d.a[1] + Math.sin(ang) * len];
-      } else {
-        d.b = p;
-      }
-    }
+    extendMark(d, toImage(e), e.shiftKey);
     redraw();
   };
 
@@ -306,8 +278,7 @@ export function Editor({ initialId }: { initialId: string }) {
     const d = draft.current;
     draft.current = null;
     if (!d) return;
-    const tiny = "b" in d && Math.hypot(d.b[0] - d.a[0], d.b[1] - d.a[1]) < 4;
-    if (!tiny) add(d);
+    if (!isTiny(d)) add(d);
     else redraw();
   };
 
@@ -373,7 +344,8 @@ export function Editor({ initialId }: { initialId: string }) {
 
   // ---- text --------------------------------------------------------------
   const commitText = () => {
-    if (text && text.value.trim()) add({ t: "text", color, font, at: text.at, text: text.value.replace(/\s+$/, "") });
+    const mark = text && textMark(text.value, text.at, color, font);
+    if (mark) add(mark);
     setText(null);
   };
 
@@ -557,11 +529,8 @@ export function Editor({ initialId }: { initialId: string }) {
   };
   const onStagePointerUp = () => (pan.current = null);
 
-  const stepFont = (dir: 1 | -1) => {
-    const i = Math.max(0, FONT_SIZES.indexOf(font));
-    setFont(FONT_SIZES[Math.min(FONT_SIZES.length - 1, Math.max(0, i + dir))]);
-  };
-  const stepWidth = (dir: 1 | -1) => setWidth((w) => Math.min(WIDTH_MAX, Math.max(WIDTH_MIN, w + dir)));
+  const stepFont = (dir: 1 | -1) => setFont((f) => nextFont(f, dir));
+  const stepWidth = (dir: 1 | -1) => setWidth((w) => nextWidth(w, dir));
 
   // ---- keyboard ----------------------------------------------------------
   useEffect(() => {
@@ -660,7 +629,6 @@ export function Editor({ initialId }: { initialId: string }) {
         }
       : null;
   const cropBox = base ? cropOf(segment, base.width, base.height) : null;
-  const strokeTool = STROKE_TOOLS.includes(tool);
 
   return (
     <div className="editor">
@@ -678,53 +646,7 @@ export function Editor({ initialId }: { initialId: string }) {
           ))}
         </div>
         <span className="ed-sep" />
-        <div className="ed-group">
-          {COLORS.map((c, i) => (
-            <button
-              key={c}
-              className={`ed-color${color === c ? " active" : ""}`}
-              style={{ "--c": c } as React.CSSProperties}
-              title={`Цвет (${i + 1})`}
-              onClick={() => setColor(c)}
-            />
-          ))}
-        </div>
-        <span className="ed-sep" />
-        {tool === "text" ? (
-          <div className="ed-group ed-font" title="Размер шрифта ([ и ])">
-            <button className="ed-tool" onClick={() => stepFont(-1)} disabled={font <= FONT_SIZES[0]} title="Меньше ([)">
-              <span className="ed-a small">A</span>
-            </button>
-            <select value={font} onChange={(e) => setFont(Number(e.target.value))}>
-              {FONT_SIZES.map((f) => (
-                <option key={f} value={f}>
-                  {f}
-                </option>
-              ))}
-            </select>
-            <button
-              className="ed-tool"
-              onClick={() => stepFont(1)}
-              disabled={font >= FONT_SIZES[FONT_SIZES.length - 1]}
-              title="Больше (])"
-            >
-              <span className="ed-a">A</span>
-            </button>
-          </div>
-        ) : (
-          <label className={`ed-group ed-width${strokeTool ? "" : " off"}`} title="Толщина ([ и ])">
-            <i style={{ width: Math.min(18, 2 + width * 0.6), height: Math.min(18, 2 + width * 0.6) }} />
-            <input
-              type="range"
-              min={WIDTH_MIN}
-              max={WIDTH_MAX}
-              value={width}
-              disabled={!strokeTool}
-              onChange={(e) => setWidth(Number(e.target.value))}
-            />
-            <span className="ed-width-value">{width}</span>
-          </label>
-        )}
+        <ToolOptions tool={tool} color={color} onColor={setColor} width={width} onWidth={setWidth} font={font} onFont={setFont} />
         <span className="ed-sep" />
         <div className="ed-group">
           <button className="ed-tool" title="Повернуть влево" disabled={!img} onClick={() => rotate(-1)}>

@@ -34,11 +34,3 @@ export function resizeBox(b: Box, handle: Handle, p: Pt, width: number, height: 
   return clampBox({ x: x1, y: y1, w: x2 - x1, h: y2 - y1 }, width, height);
 }
 
-/** End point of a line from `a` towards `p`, turned to the nearest 45°. */
-export function snap45(a: Pt, p: Pt): Pt {
-  const dx = p[0] - a[0];
-  const dy = p[1] - a[1];
-  const angle = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
-  const length = Math.hypot(dx, dy);
-  return [a[0] + Math.cos(angle) * length, a[1] + Math.sin(angle) * length];
-}
