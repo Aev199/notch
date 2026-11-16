@@ -57,11 +57,14 @@ pub struct Timing {
     pub strip_open_delay_ms: u64,
     /// How long the cursor may be outside the open island before it closes.
     pub close_delay_ms: u64,
+    /// How long something must be held over the capsule or the strip with
+    /// the mouse button down before the island opens to take the drop.
+    pub drag_open_delay_ms: u64,
 }
 
 impl Default for Timing {
     fn default() -> Self {
-        Self { open_delay_ms: 0, strip_open_delay_ms: 150, close_delay_ms: 350 }
+        Self { open_delay_ms: 0, strip_open_delay_ms: 150, close_delay_ms: 350, drag_open_delay_ms: 350 }
     }
 }
 
@@ -83,6 +86,9 @@ pub struct Sample {
     pub idle_thin_ms: Option<u64>,
     /// Stay a strip regardless of activity (a fullscreen app is in front).
     pub force_thin: bool,
+    /// Files may be dropped on the island: holding the mouse button over the
+    /// capsule or the strip for a moment (a drag that stopped there) opens it.
+    pub drag_opens: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -137,6 +143,10 @@ impl HoverMachine {
     /// A drag-out of a screenshot is in progress.
     pub fn set_dragging(&mut self, dragging: bool) {
         self.dragging = dragging;
+    }
+
+    pub fn is_dragging(&self) -> bool {
+        self.dragging
     }
 
     /// Something worth showing happened (new clip or screenshot): the strip
@@ -208,6 +218,14 @@ impl HoverMachine {
                 }
                 return None;
             }
+            // A drag held on the strip: open up to take the files. A click or
+            // a window being moved under the strip does not rest that long.
+            if s.strip.contains(cx, cy) && s.drag_opens && !s.force_thin {
+                if self.dwell(s.now_ms, self.timing.drag_open_delay_ms) {
+                    return self.expand_now(s);
+                }
+                return None;
+            }
             self.dwell_since = None;
             if !should_thin {
                 self.thin = false;
@@ -223,7 +241,13 @@ impl HoverMachine {
         if over {
             self.last_active = s.now_ms;
             if s.left_button_down {
-                self.dwell_since = None;
+                if s.drag_opens {
+                    if self.dwell(s.now_ms, self.timing.drag_open_delay_ms) {
+                        return self.expand_now(s);
+                    }
+                } else {
+                    self.dwell_since = None;
+                }
                 return None;
             }
             if self.dwell(s.now_ms, self.timing.open_delay_ms) {
@@ -290,7 +314,35 @@ mod tests {
             left_button_down: false,
             idle_thin_ms: None,
             force_thin: false,
+            drag_opens: false,
         }
+    }
+
+    #[test]
+    fn a_drag_held_over_the_notch_opens_it() {
+        let held = |now, x, y, drag_opens| Sample { left_button_down: true, drag_opens, ..sample(now, x, y) };
+        // Capsule: without the option a held button never opens.
+        let mut m = HoverMachine::new(Timing::default());
+        assert_eq!(m.tick(&held(0, 150.0, 10.0, false)), None);
+        assert_eq!(m.tick(&held(1_000, 150.0, 10.0, false)), None);
+        // With it: after the pause, and the window then catches the mouse (the drop).
+        let mut m = HoverMachine::new(Timing::default());
+        assert_eq!(m.tick(&held(0, 150.0, 10.0, true)), None);
+        assert_eq!(m.tick(&held(200, 150.0, 10.0, true)), None);
+        assert_eq!(m.tick(&held(360, 150.0, 10.0, true)), Some(Transition::Expand));
+        assert!(m.interactive());
+        // Stays open while the button is held, even outside.
+        assert_eq!(m.tick(&held(2_000, 900.0, 600.0, true)), None);
+        assert!(m.is_expanded());
+
+        // Strip: a drag passing by does nothing, a drag that stops opens.
+        let thin = |now, x, y| Sample { idle_thin_ms: Some(100), ..held(now, x, y, true) };
+        let mut m = HoverMachine::new(Timing::default());
+        assert_eq!(m.tick(&Sample { left_button_down: false, ..thin(500, 900.0, 600.0) }), Some(Transition::Shrink));
+        assert_eq!(m.tick(&thin(600, 150.0, 3.0)), None);
+        assert_eq!(m.tick(&thin(700, 900.0, 600.0)), None);
+        assert_eq!(m.tick(&thin(800, 150.0, 3.0)), None);
+        assert_eq!(m.tick(&thin(1_200, 150.0, 3.0)), Some(Transition::Expand));
     }
 
     fn slow() -> Timing {

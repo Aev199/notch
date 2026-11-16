@@ -1,7 +1,8 @@
 //! Shared application state and the helpers every module uses to change it.
 
 use notch_core::hover::{HoverMachine, Mode, Timing, Transition};
-use notch_core::settings::{write_atomic, Settings, HISTORY_FILE, PINS_FILE};
+use notch_core::files::FileShelf;
+use notch_core::settings::{write_atomic, Settings, FILES_FILE, HISTORY_FILE, PINS_FILE};
 use notch_core::shelf::Shelf;
 use notch_core::text_history::{TextEntry, TextHistory};
 use serde::Serialize;
@@ -33,6 +34,10 @@ pub struct App {
     pub settings: Mutex<Settings>,
     pub texts: Mutex<TextHistory>,
     pub shelf: Mutex<Shelf>,
+    /// Files dropped on the notch (paths only).
+    pub files: Mutex<FileShelf>,
+    /// The frozen screen the capture window is showing, until it closes.
+    pub capture: Mutex<Option<win::Screen>>,
     pub hover: Mutex<HoverMachine>,
     pub expanded_size: Mutex<(f64, f64)>,
     /// Raw HWND of the overlay (0 until the window exists / off Windows).
@@ -61,16 +66,19 @@ pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 #[derive(Serialize, Clone)]
 pub struct IslandEvent {
     pub mode: Mode,
-    /// Tab to show when opening (`shelf`, `clipboard`, `translate`).
+    /// Tab to show when opening (`shelf`, `files`, `clipboard`, `translate`).
     pub tab: Option<&'static str>,
-    /// Put the caret into the translator field (hotkey).
+    /// Put the caret into the tab's text field (hotkeys): the translator's
+    /// source, the clipboard search.
     pub focus: bool,
 }
 
 impl App {
-    pub fn new(data_dir: PathBuf, settings: Settings, texts: TextHistory, shelf: Shelf) -> Self {
+    pub fn new(data_dir: PathBuf, settings: Settings, texts: TextHistory, shelf: Shelf, files: FileShelf) -> Self {
         Self {
             data_dir,
+            files: Mutex::new(files),
+            capture: Mutex::new(None),
             settings: Mutex::new(settings),
             texts: Mutex::new(texts),
             shelf: Mutex::new(shelf),
@@ -118,6 +126,15 @@ impl App {
         }
     }
 
+    pub fn files_path(&self) -> PathBuf {
+        self.data_dir.join(FILES_FILE)
+    }
+
+    /// Picture shown under the cursor while files are dragged out.
+    pub fn file_icon_path(&self) -> PathBuf {
+        self.data_dir.join("cache").join("file-icon.png")
+    }
+
     /// Marks the next clipboard change as our own so it is not recorded again.
     pub fn mute_clipboard(&self, ms: u64) {
         self.ignore_clipboard_until.store(now_ms() + ms, Ordering::Relaxed);
@@ -134,6 +151,19 @@ pub fn emit_shelf(app: &AppHandle) {
     let shared = app.state::<Shared>();
     let items = lock(&shared.shelf).items().to_vec();
     let _ = app.emit("shelf", items);
+}
+
+/// Saves the file shelf and tells the UI (after a look at the disk: sizes,
+/// files that are gone).
+pub fn emit_files(app: &AppHandle) {
+    let shared = app.state::<Shared>();
+    let entries = {
+        let mut files = lock(&shared.files);
+        files.refresh();
+        files.save(&shared.files_path());
+        files.entries().to_vec()
+    };
+    let _ = app.emit("files", entries);
 }
 
 /// Tells the UI about a mode change decided by the hover machine.

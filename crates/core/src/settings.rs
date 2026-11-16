@@ -9,6 +9,8 @@ pub const SETTINGS_FILE: &str = "notch.settings.json";
 pub const HISTORY_FILE: &str = "notch.history.json";
 /// Pinned clipboard entries: always saved (the user pinned them on purpose).
 pub const PINS_FILE: &str = "notch.pins.json";
+/// The file shelf: paths of the files put on it (the files stay where they are).
+pub const FILES_FILE: &str = "notch.files.json";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -40,6 +42,16 @@ pub struct Settings {
     pub auto_update: bool,
     /// Unix ms of the last online check (not shown in the UI).
     pub last_update_check: u64,
+    /// PrintScreen opens Notch's own capture window (area, marks, text).
+    /// Off for people who use another screenshot program.
+    pub capture_printscreen: bool,
+    /// Global hotkey that opens the clipboard history with the keyboard in
+    /// the search field. Empty string disables it.
+    pub history_hotkey: String,
+    /// The "Файлы" tab: files dropped on the notch wait there.
+    pub files_shelf: bool,
+    /// Show the notch on the monitor the cursor is on (otherwise: primary).
+    pub follow_cursor: bool,
 }
 
 impl Default for Settings {
@@ -61,6 +73,10 @@ impl Default for Settings {
             idle_seconds: 4,
             auto_update: true,
             last_update_check: 0,
+            capture_printscreen: true,
+            history_hotkey: "Ctrl+Alt+B".into(),
+            files_shelf: true,
+            follow_cursor: false,
         }
     }
 }
@@ -72,6 +88,7 @@ impl Settings {
         self.text_limit = self.text_limit.clamp(5, 100);
         self.idle_seconds = self.idle_seconds.clamp(1, 600);
         self.hotkey = self.hotkey.trim().to_string();
+        self.history_hotkey = self.history_hotkey.trim().to_string();
         self.deepl_key = self.deepl_key.trim().to_string();
         self.llm_url = self.llm_url.trim().to_string();
         self

@@ -108,3 +108,16 @@ export const AddImageIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="M3 15l4-4 4 4M19 3v6M16 6h6" />
   </svg>
 );
+
+export const FolderIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.5h7.5A2.5 2.5 0 0 1 21 10v7a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17V7.5Z" />
+  </svg>
+);
+
+export const FileIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+    <path d="M14 3v5h5" />
+  </svg>
+);

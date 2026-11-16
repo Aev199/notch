@@ -757,3 +757,115 @@ textarea {
   border-radius: 50%;
   background: var(--accent);
 }
+
+/* Clipboard row picked with the arrow keys. */
+.clip.selected {
+  background: var(--hover);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* File shelf */
+.files-wrap {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.files-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 6px 8px;
+}
+
+.files {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.file {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 4px 4px 4px 8px;
+  border-radius: 6px;
+  cursor: grab;
+}
+
+.file + .file {
+  margin-top: 1px;
+}
+
+.file:hover {
+  background: var(--hover);
+}
+
+.file:hover .clip-actions {
+  display: flex;
+}
+
+.file:hover .clip-meta {
+  display: none;
+}
+
+.file.missing {
+  cursor: default;
+}
+
+.file.missing .file-name,
+.file.missing .file-badge {
+  color: var(--faint);
+  text-decoration: line-through;
+}
+
+.file-badge {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 26px;
+  border-radius: 5px;
+  background: var(--press);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.file-badge.dir {
+  color: var(--accent);
+}
+
+.file-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.file-name,
+.file-path {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.file-path {
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.settings .hint {
+  margin: -2px 0 2px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--faint);
+}

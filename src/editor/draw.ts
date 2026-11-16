@@ -11,6 +11,7 @@ export type Shape =
   | { t: "pen"; color: string; w: number; pts: Pt[] }
   | { t: "marker"; color: string; w: number; pts: Pt[] }
   | { t: "arrow"; color: string; w: number; a: Pt; b: Pt }
+  | { t: "line"; color: string; w: number; a: Pt; b: Pt }
   | { t: "rect"; color: string; w: number; a: Pt; b: Pt }
   | { t: "blur"; w: number; a: Pt; b: Pt }
   /** `font`: letter height in units (see `unitOf`), from FONT_SIZES. */
@@ -160,6 +161,14 @@ function drawShape(ctx: CanvasRenderingContext2D, base: Base, s: Shape, unit: nu
       ctx.fill();
       break;
     }
+    case "line":
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = s.w * unit;
+      ctx.beginPath();
+      ctx.moveTo(s.a[0], s.a[1]);
+      ctx.lineTo(s.b[0], s.b[1]);
+      ctx.stroke();
+      break;
     case "rect": {
       const b = box(s.a, s.b);
       ctx.strokeStyle = s.color;

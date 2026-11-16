@@ -1,0 +1,180 @@
+/* Capture window: the frozen screen edge to edge, nothing else. */
+html.is-capture,
+html.is-capture body,
+html.is-capture #root {
+  background: #000;
+  overflow: hidden;
+}
+
+.capture {
+  position: fixed;
+  inset: 0;
+  cursor: crosshair;
+  user-select: none;
+  touch-action: none;
+}
+
+.cap-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.cap-hint,
+.cap-status {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 7px 14px;
+  border-radius: 8px;
+  background: rgba(17, 17, 19, 0.92);
+  color: var(--text);
+  font-size: 13px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.cap-hint {
+  top: 42%;
+}
+
+.cap-status {
+  bottom: 48px;
+}
+
+.cap-status.error {
+  color: var(--danger);
+}
+
+/* The area itself is drawn on the canvas; this box only carries the handles. */
+.cap-area {
+  position: absolute;
+}
+
+.cap-area.movable {
+  cursor: move;
+}
+
+.cap-handle {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  margin: -4px 0 0 -4px;
+  box-sizing: border-box;
+  background: #fff;
+  border: 1px solid #000;
+}
+
+.cap-handle.h-nw { left: 0; top: 0; cursor: nwse-resize; }
+.cap-handle.h-n { left: 50%; top: 0; cursor: ns-resize; }
+.cap-handle.h-ne { left: 100%; top: 0; cursor: nesw-resize; }
+.cap-handle.h-e { left: 100%; top: 50%; cursor: ew-resize; }
+.cap-handle.h-se { left: 100%; top: 100%; cursor: nwse-resize; }
+.cap-handle.h-s { left: 50%; top: 100%; cursor: ns-resize; }
+.cap-handle.h-sw { left: 0; top: 100%; cursor: nesw-resize; }
+.cap-handle.h-w { left: 0; top: 50%; cursor: ew-resize; }
+
+.cap-size {
+  position: absolute;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  pointer-events: none;
+}
+
+.cap-bar {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  box-sizing: border-box;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--island);
+  box-shadow: inset 0 0 0 1px var(--line);
+  cursor: default;
+}
+
+.cap-bar.vertical {
+  flex-direction: column;
+}
+
+.cap-push {
+  flex: 1;
+}
+
+.cap-btn {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.cap-btn:hover:not(:disabled),
+.cap-text-btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.cap-btn.active {
+  background: var(--press);
+  color: var(--text);
+}
+
+.cap-btn:disabled,
+.cap-text-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.cap-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+/* Colours open to the left of the tool column. */
+.cap-palette {
+  position: absolute;
+  right: calc(100% + 6px);
+  bottom: 30px;
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--island);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.cap-text-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cap-text-btn.primary {
+  color: var(--accent);
+}

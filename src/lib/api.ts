@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-export type Tab = "shelf" | "clipboard" | "translate" | "settings";
+export type Tab = "shelf" | "files" | "clipboard" | "translate" | "settings";
 export type Provider = "offline" | "google" | "deepl" | "llm";
 export type Mode = "open" | "compact" | "thin";
 export type Lang = "ru" | "en";
@@ -29,6 +29,18 @@ export interface ShelfItem {
   group: string | null;
 }
 
+/** A file or folder on the file shelf (only its path is kept). */
+export interface FileEntry {
+  id: number;
+  path: string;
+  name: string;
+  addedAt: number;
+  isDir: boolean;
+  size: number;
+  /** Moved or deleted since it was put here. */
+  missing: boolean;
+}
+
 export interface Settings {
   provider: Provider;
   deeplKey: string;
@@ -46,6 +58,10 @@ export interface Settings {
   idleSeconds: number;
   autoUpdate: boolean;
   lastUpdateCheck: number;
+  capturePrintscreen: boolean;
+  historyHotkey: string;
+  filesShelf: boolean;
+  followCursor: boolean;
 }
 
 export interface UpdateOffer {
@@ -78,6 +94,9 @@ export interface Snapshot {
   settings: Settings;
   texts: TextEntry[];
   shelf: ShelfItem[];
+  files: FileEntry[];
+  /** Picture shown under the cursor while files are dragged out. */
+  fileIcon: string;
   dataDir: string;
   autostart: boolean;
   mode: Mode;
@@ -93,7 +112,7 @@ export interface Translation {
 export interface IslandEvent {
   mode: Mode;
   tab: Tab | null;
-  /** Put the caret into the translator field. */
+  /** Put the caret into the tab's text field (translator, clipboard search). */
   focus: boolean;
 }
 
@@ -134,6 +153,16 @@ export const api = {
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { new: settings }),
   setAutostart: (enabled: boolean) => invoke<boolean>("set_autostart", { enabled }),
   quit: () => invoke("quit"),
+  filesRemove: (id: number) => invoke("files_remove", { id }),
+  filesClear: () => invoke("files_clear"),
+  filesRefresh: () => invoke("files_refresh"),
+  filesOpen: (id: number) => invoke("files_open", { id }),
+  filesReveal: (id: number) => invoke("files_reveal", { id }),
+  /** The frozen screen: 8 bytes of width and height (u32 LE), then RGBA. */
+  captureImage: () => invoke<ArrayBuffer>("capture_image"),
+  captureShow: () => invoke("capture_show"),
+  captureClose: () => invoke("capture_close"),
+  captureText: (text: string, translate: boolean) => invoke("capture_text", { text, translate }),
   updateInfo: () => invoke<UpdateInfo>("update_info"),
   updateCheck: () => invoke("update_check"),
   updateInstall: () => invoke("update_install"),
@@ -164,6 +193,19 @@ export function previewText(text: string): string {
     .filter(Boolean)
     .slice(0, 4)
     .join("\n");
+}
+
+/** "1,4 МБ" for the file list. */
+export function sizeText(bytes: number): string {
+  const units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  const digits = unit === 0 || value >= 100 ? 0 : 1;
+  return `${value.toFixed(digits).replace(".", ",")} ${units[unit]}`;
 }
 
 export function errorText(e: unknown): string {

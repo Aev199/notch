@@ -1,12 +1,13 @@
 import type { Tool } from "./Editor";
 
-type IconName = Tool | "undo" | "redo" | "rotl" | "rotr" | "layer";
+type IconName = Tool | "line" | "undo" | "redo" | "rotl" | "rotr" | "layer";
 
 const PATHS: Record<IconName, JSX.Element> = {
   select: <path d="M5 3l14 8-6 1.5L10 19 5 3Z" />,
   pen: <path d="M4 20l4-1 11-11-3-3L5 16l-1 4ZM14 7l3 3" />,
   marker: <path d="M6 15l7-7 4 4-7 7H6v-4ZM4 21h16" />,
   arrow: <path d="M5 19 19 5M10 5h9v9" />,
+  line: <path d="M5 19 19 5" />,
   rect: <rect x="4" y="6" width="16" height="12" rx="1" />,
   text: <path d="M5 6V4h14v2M12 4v16M9 20h6" />,
   step: (

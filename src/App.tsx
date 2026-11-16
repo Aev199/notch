@@ -7,6 +7,7 @@ import {
   type IslandEvent,
   type Mode,
   type Settings,
+  type FileEntry,
   type ShelfItem,
   type Snapshot,
   type Tab,
@@ -18,9 +19,10 @@ import { translateOffline } from "./lib/offline";
 import { useMinuteTick } from "./lib/time";
 import { Shelf } from "./components/Shelf";
 import { Clipboard } from "./components/Clipboard";
+import { Files } from "./components/Files";
 import { Translate, type Incoming } from "./components/Translate";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { AddImageIcon, ClipIcon, CloseIcon, GearIcon, ImageIcon } from "./components/Icons";
+import { AddImageIcon, ClipIcon, CloseIcon, FileIcon, GearIcon, ImageIcon } from "./components/Icons";
 import { updatePending } from "./components/Updates";
 
 /** Logical sizes; compact and open must match the backend hitboxes. */
@@ -35,6 +37,7 @@ const RESIZE = { type: "tween" as const, ease: [0.2, 0.8, 0.2, 1] as const, dura
 
 const TABS: { id: Exclude<Tab, "settings">; title: string }[] = [
   { id: "shelf", title: "Полка" },
+  { id: "files", title: "Файлы" },
   { id: "clipboard", title: "Буфер" },
   { id: "translate", title: "Перевод" },
 ];
@@ -46,6 +49,9 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("shelf");
   const [texts, setTexts] = useState<TextEntry[]>([]);
   const [shelf, setShelf] = useState<ShelfItem[]>([]);
+  const [files, setFiles] = useState<FileEntry[]>([]);
+  // Bumped when the history hotkey puts the caret into the clipboard search.
+  const [clipFocus, setClipFocus] = useState(0);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [autostart, setAutostart] = useState(false);
@@ -69,6 +75,7 @@ export default function App() {
       setSettings(s.settings);
       setTexts(s.texts);
       setShelf(s.shelf);
+      setFiles(s.files);
       setAutostart(s.autostart);
       setMode(s.mode);
       if (s.settings.provider === "offline") {
@@ -85,10 +92,12 @@ export default function App() {
       on<IslandEvent>("island", (e) => {
         setMode(e.mode);
         if (e.tab) setTab(e.tab);
+        if (e.focus && e.tab === "clipboard") setClipFocus((n) => n + 1);
         if (e.mode !== "open") (document.activeElement as HTMLElement | null)?.blur();
       }),
       on<TextEntry[]>("texts", setTexts),
       on<ShelfItem[]>("shelf", setShelf),
+      on<FileEntry[]>("files", setFiles),
       on<TranslateRequest>("translate-request", (r) => setIncoming({ ...r, seq: ++requestSeq.current })),
       on<"shelf" | "clipboard">("captured", (kind) => {
         setFlash(kind);
@@ -120,7 +129,11 @@ export default function App() {
 
   const size = SIZES[mode];
   const providerName = settings ? PROVIDER_NAMES[settings.provider] : "";
-  const counts: Record<string, number> = { shelf: shelf.length, clipboard: texts.length };
+  const counts: Record<string, number> = { shelf: shelf.length, files: files.length, clipboard: texts.length };
+  const filesOn = settings?.filesShelf ?? false;
+  const tabs = TABS.filter((t) => t.id !== "files" || filesOn);
+  // The tab was switched off in the settings while it was open.
+  const shownTab: Tab = tab === "files" && !filesOn ? "shelf" : tab;
 
   return (
     <MotionConfig reducedMotion="user">
@@ -156,14 +169,19 @@ export default function App() {
                 exit={{ opacity: 0, transition: { duration: 0.05 } }}
               >
                 <header className="tabs">
-                  {TABS.map(({ id, title }) => (
-                    <button key={id} className={`tab${tab === id ? " active" : ""}`} onClick={() => setTab(id)}>
+                  {tabs.map(({ id, title }) => (
+                    <button key={id} className={`tab${shownTab === id ? " active" : ""}`} onClick={() => setTab(id)}>
                       {title}
                       {counts[id] > 0 && <span className="tab-count">{counts[id]}</span>}
                     </button>
                   ))}
                   <span className="push" />
-                  {tab === "shelf" && (
+                  {shownTab === "files" && files.length > 0 && (
+                    <button className="btn" title="Убрать всё с полки (сами файлы останутся на местах)" onClick={() => void api.filesClear()}>
+                      Очистить
+                    </button>
+                  )}
+                  {shownTab === "shelf" && (
                     <button
                       className="icon-btn"
                       title="Положить на полку картинку из буфера обмена (если она не попала сама)"
@@ -172,7 +190,7 @@ export default function App() {
                       <AddImageIcon />
                     </button>
                   )}
-                  {tab === "shelf" && shelf.some((i) => !i.group) && (
+                  {shownTab === "shelf" && shelf.some((i) => !i.group) && (
                     <button className="btn" title="Удалить скриншоты вне групп" onClick={() => void api.shelfClear()}>
                       Очистить
                     </button>
@@ -194,8 +212,9 @@ export default function App() {
                   </button>
                 </header>
                 <main className="content">
-                  {tab === "shelf" && <Shelf items={shelf} onError={showError} />}
-                  {tab === "clipboard" && <Clipboard entries={texts} onError={showError} />}
+                  {shownTab === "shelf" && <Shelf items={shelf} onError={showError} />}
+                  {shownTab === "files" && snapshot && <Files entries={files} icon={snapshot.fileIcon} onError={showError} />}
+                  {tab === "clipboard" && <Clipboard entries={texts} focusSeq={clipFocus} onError={showError} />}
                   {tab === "translate" && settings && (
                     <Translate incoming={incoming} provider={settings.provider} providerName={providerName} />
                   )}
@@ -224,6 +243,12 @@ export default function App() {
                   <ImageIcon width={13} height={13} />
                   {shelf.length}
                 </span>
+                {filesOn && files.length > 0 && (
+                  <span className="count">
+                    <FileIcon width={13} height={13} />
+                    {files.length}
+                  </span>
+                )}
                 <span className={`count${flash === "clipboard" ? " hot" : ""}`}>
                   <ClipIcon width={13} height={13} />
                   {texts.length}

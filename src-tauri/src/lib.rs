@@ -1,6 +1,7 @@
 //! Notch: a portable Dynamic Island-style overlay for Windows 10/11 with a
 //! screenshot shelf, clipboard history and a quick RU/EN translator.
 
+mod capture;
 mod clip;
 mod models;
 mod net;
@@ -11,7 +12,8 @@ mod updates;
 mod wake;
 mod win;
 
-use notch_core::settings::{self, Settings, SETTINGS_FILE};
+use notch_core::files::{FileEntry, FileShelf};
+use notch_core::settings::{self, Settings, FILES_FILE, SETTINGS_FILE};
 use notch_core::shelf::{ShelfItem, Shelf};
 use notch_core::text_history::{TextEntry, TextHistory};
 use serde::Serialize;
@@ -20,7 +22,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, State, WindowEvent};
+use tauri::{AppHandle, DragDropEvent, Manager, State, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 use state::{lock, App, Shared};
@@ -33,6 +35,9 @@ struct Snapshot {
     settings: Settings,
     texts: Vec<TextEntry>,
     shelf: Vec<ShelfItem>,
+    files: Vec<FileEntry>,
+    /// Picture for the cursor while files are dragged out.
+    file_icon: String,
     data_dir: String,
     autostart: bool,
     mode: notch_core::hover::Mode,
@@ -56,6 +61,8 @@ fn snapshot(state: State<'_, Shared>) -> Snapshot {
         settings: lock(&state.settings).clone(),
         texts: lock(&state.texts).entries().to_vec(),
         shelf: lock(&state.shelf).items().to_vec(),
+        files: lock(&state.files).entries().to_vec(),
+        file_icon: state.file_icon_path().display().to_string(),
         data_dir: state.data_dir.display().to_string(),
         autostart: autostart_enabled(),
         mode: lock(&state.hover).mode(),
@@ -78,6 +85,7 @@ fn close_island(app: AppHandle) {
 fn open_island(app: AppHandle, tab: Option<String>) {
     let tab = match tab.as_deref() {
         Some("shelf") => Some("shelf"),
+        Some("files") => Some("files"),
         Some("clipboard") => Some("clipboard"),
         Some("translate") => Some("translate"),
         Some("settings") => Some("settings"),
@@ -352,24 +360,138 @@ fn clipboard_text() -> Option<String> {
     clip::read_text()
 }
 
-fn register_hotkey(app: &AppHandle, hotkey: &str) -> Result<(), String> {
+/// What a global hotkey does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum HotkeyAction {
+    /// Translate the clipboard text.
+    Translate,
+    /// Open the clipboard history with the keyboard in its search field.
+    History,
+    /// Notch's own screenshot tool.
+    Capture,
+}
+
+const CAPTURE_KEY: &str = "PrintScreen";
+
+/// The hotkeys the settings ask for (switched-off ones left out).
+fn hotkeys(settings: &Settings) -> Vec<(HotkeyAction, String)> {
+    let mut list = vec![
+        (HotkeyAction::Translate, settings.hotkey.clone()),
+        (HotkeyAction::History, settings.history_hotkey.clone()),
+    ];
+    if settings.capture_printscreen {
+        list.push((HotkeyAction::Capture, CAPTURE_KEY.to_string()));
+    }
+    list.retain(|(_, keys)| !keys.is_empty());
+    list
+}
+
+/// Registers every hotkey of `settings` in place of the current ones.
+/// Returns what could not be registered, one message per hotkey; the others
+/// are registered all the same.
+fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Vec<String> {
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
-    if hotkey.is_empty() {
-        return Ok(());
+    let mut errors = Vec::new();
+    let mut taken: Vec<Shortcut> = Vec::new();
+    for (_, keys) in hotkeys(settings) {
+        let shortcut: Shortcut = match keys.parse() {
+            Ok(s) => s,
+            Err(e) => {
+                errors.push(format!("не понимаю сочетание «{keys}»: {e}"));
+                continue;
+            }
+        };
+        if taken.contains(&shortcut) {
+            errors.push(format!("сочетание «{keys}» назначено дважды"));
+            continue;
+        }
+        match gs.register(shortcut) {
+            Ok(()) => taken.push(shortcut),
+            Err(e) => errors.push(format!("сочетание «{keys}» занято другой программой: {e}")),
+        }
     }
-    let shortcut: Shortcut = hotkey.parse().map_err(|e| format!("не понимаю сочетание «{hotkey}»: {e}"))?;
-    gs.register(shortcut).map_err(|e| format!("сочетание «{hotkey}» занято другой программой: {e}"))
+    errors
+}
+
+fn on_hotkey(app: &AppHandle, pressed: &Shortcut) {
+    let settings = lock(&app.state::<Shared>().settings).clone();
+    let action = hotkeys(&settings).into_iter().find(|(_, keys)| keys.parse::<Shortcut>().is_ok_and(|s| &s == pressed));
+    match action.map(|(action, _)| action) {
+        Some(HotkeyAction::Translate) => clip::request_translation(app, clip::read_text().unwrap_or_default(), true),
+        Some(HotkeyAction::History) => state::open_island(app, Some("clipboard"), 8_000, true),
+        Some(HotkeyAction::Capture) => capture::start(app),
+        None => {}
+    }
+}
+
+/// Files or folders were dropped on the island.
+fn take_files(app: &AppHandle, paths: &[std::path::PathBuf]) {
+    let shared = app.state::<Shared>();
+    let paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    if lock(&shared.files).add(&paths, state::now_ms()) > 0 {
+        state::emit_files(app);
+        state::open_island(app, Some("files"), 4_000, false);
+    }
+}
+
+fn file_path(id: u64, state: &Shared) -> Result<String, String> {
+    lock(&state.files).get(id).map(|e| e.path.clone()).ok_or_else(|| "файл не найден на полке".into())
+}
+
+#[tauri::command]
+fn files_remove(id: u64, app: AppHandle, state: State<'_, Shared>) {
+    lock(&state.files).remove(id);
+    state::emit_files(&app);
+}
+
+#[tauri::command]
+fn files_clear(app: AppHandle, state: State<'_, Shared>) {
+    lock(&state.files).clear();
+    state::emit_files(&app);
+}
+
+/// Looks at the disk again (the tab was opened): sizes, missing files.
+#[tauri::command]
+fn files_refresh(app: AppHandle) {
+    state::emit_files(&app);
+}
+
+/// Opens the file in its program.
+#[tauri::command]
+fn files_open(id: u64, app: AppHandle, state: State<'_, Shared>) -> Result<(), String> {
+    let path = file_path(id, &state)?;
+    if !std::path::Path::new(&path).exists() {
+        state::emit_files(&app);
+        return Err("файла больше нет на этом месте".into());
+    }
+    if !win::shell_open(&path) {
+        return Err("не удалось открыть файл".into());
+    }
+    state::close_island(&app);
+    Ok(())
+}
+
+/// Shows the file in Explorer.
+#[tauri::command]
+fn files_reveal(id: u64, app: AppHandle, state: State<'_, Shared>) -> Result<(), String> {
+    let path = file_path(id, &state)?;
+    if !win::reveal(&path) {
+        return Err("не удалось открыть папку".into());
+    }
+    state::close_island(&app);
+    Ok(())
 }
 
 #[tauri::command]
 fn save_settings(new: Settings, app: AppHandle, state: State<'_, Shared>) -> Result<Settings, String> {
     let new = new.sanitized();
     let old = lock(&state.settings).clone();
-    if new.hotkey != old.hotkey {
-        if let Err(e) = register_hotkey(&app, &new.hotkey) {
-            let _ = register_hotkey(&app, &old.hotkey);
-            return Err(e);
+    if hotkeys(&new) != hotkeys(&old) {
+        let errors = register_hotkeys(&app, &new);
+        if !errors.is_empty() {
+            let _ = register_hotkeys(&app, &old);
+            return Err(errors.join("; "));
         }
     }
     new.save(&state.data_dir.join(SETTINGS_FILE))?;
@@ -379,6 +501,8 @@ fn save_settings(new: Settings, app: AppHandle, state: State<'_, Shared>) -> Res
     state.persist_texts();
     state::emit_texts(&app);
     state::emit_shelf(&app);
+    // The monitor option takes effect at once, not on the next slow tick.
+    overlay::place_window(&app);
     Ok(new)
 }
 
@@ -454,7 +578,12 @@ fn load_state() -> App {
     let shelf = Shelf::open(&shelf_dir, settings.shelf_limit)
         .or_else(|_| Shelf::open(fallback.join("cache").join("shelf"), settings.shelf_limit))
         .expect("screenshot cache folder");
-    App::new(data_dir, settings, texts, shelf)
+    let files = FileShelf::load(&data_dir.join(FILES_FILE));
+    let app = App::new(data_dir, settings, texts, shelf, files);
+    if let Err(e) = notch_core::files::write_drag_icon(&app.file_icon_path()) {
+        eprintln!("file icon: {e}");
+    }
+    app
 }
 
 pub fn run() {
@@ -478,9 +607,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
+                .with_handler(|app, shortcut, event| {
                     if event.state == ShortcutState::Pressed {
-                        clip::request_translation(app, clip::read_text().unwrap_or_default(), true);
+                        on_hotkey(app, shortcut);
                     }
                 })
                 .build(),
@@ -502,6 +631,15 @@ pub fn run() {
             open_editor,
             ocr_png,
             clipboard_image,
+            capture::capture_image,
+            capture::capture_show,
+            capture::capture_close,
+            capture::capture_text,
+            files_remove,
+            files_clear,
+            files_refresh,
+            files_open,
+            files_reveal,
             updates::update_info,
             updates::update_check,
             updates::update_install,
@@ -538,8 +676,8 @@ pub fn run() {
             overlay::place_window(&handle);
             win::apply_styles(shared.hwnd(), true);
 
-            let hotkey = lock(&shared.settings).hotkey.clone();
-            if let Err(e) = register_hotkey(&handle, &hotkey) {
+            let settings = lock(&shared.settings).clone();
+            for e in register_hotkeys(&handle, &settings) {
                 eprintln!("hotkey: {e}");
             }
             if let Err(e) = build_tray(&handle) {
@@ -552,6 +690,19 @@ pub fn run() {
                 // (do not steal it back from where the user clicked).
                 WindowEvent::Focused(false) => state::end_input(&blur_handle, false),
                 WindowEvent::ScaleFactorChanged { .. } => overlay::place_window(&blur_handle),
+                // Files from Explorer. Our own drags out of the shelf pass
+                // over the island too: those are not for the file shelf.
+                WindowEvent::DragDrop(drag) => {
+                    let shared = blur_handle.state::<Shared>();
+                    let enabled = lock(&shared.settings).files_shelf;
+                    let ours = lock(&shared.hover).is_dragging();
+                    match drag {
+                        _ if !enabled || ours => {}
+                        DragDropEvent::Enter { .. } => state::open_island(&blur_handle, Some("files"), 6_000, false),
+                        DragDropEvent::Drop { paths, .. } => take_files(&blur_handle, paths),
+                        _ => {}
+                    }
+                }
                 _ => {}
             });
 

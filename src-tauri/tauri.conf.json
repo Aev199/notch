@@ -30,7 +30,7 @@
         "focus": false,
         "focusable": false,
         "visible": true,
-        "dragDropEnabled": false
+        "dragDropEnabled": true
       }
     ],
     "security": {

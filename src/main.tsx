@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { Editor } from "./editor/Editor";
+import { Capture } from "./capture/Capture";
 import "./styles.css";
 import "./editor/editor.css";
 
@@ -11,10 +12,14 @@ window.addEventListener("contextmenu", (e) => {
 });
 window.addEventListener("wheel", (e) => e.ctrlKey && e.preventDefault(), { passive: false });
 
-// The same bundle serves the island (main window) and the editor window.
-const editorId = new URLSearchParams(window.location.search).get("editor");
+// The same bundle serves the island (main window), the editor window and
+// the screen capture window.
+const query = new URLSearchParams(window.location.search);
+const editorId = query.get("editor");
+const capture = query.has("capture");
 if (editorId) document.documentElement.classList.add("is-editor");
+if (capture) document.documentElement.classList.add("is-capture");
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>{editorId ? <Editor initialId={editorId} /> : <App />}</React.StrictMode>,
+  <React.StrictMode>{capture ? <Capture /> : editorId ? <Editor initialId={editorId} /> : <App />}</React.StrictMode>,
 );

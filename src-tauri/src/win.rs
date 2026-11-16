@@ -425,6 +425,97 @@ mod imp {
         }
     }
 
+    /// Rectangle (physical pixels) and scale factor of the monitor under the
+    /// cursor: `(x, y, width, height, scale)`.
+    pub fn cursor_monitor() -> Option<(i32, i32, i32, i32, f64)> {
+        use windows_sys::Win32::Graphics::Gdi::MonitorFromPoint;
+        use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+        unsafe {
+            let mut p = POINT { x: 0, y: 0 };
+            if GetCursorPos(&mut p) == 0 {
+                return None;
+            }
+            let monitor = MonitorFromPoint(p, MONITOR_DEFAULTTOPRIMARY);
+            let mut info: MONITORINFO = std::mem::zeroed();
+            info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+            if GetMonitorInfoW(monitor, &mut info) == 0 {
+                return None;
+            }
+            let (mut dpi_x, mut dpi_y) = (96u32, 96u32);
+            if GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) < 0 || dpi_x == 0 {
+                dpi_x = 96;
+            }
+            let m = info.rcMonitor;
+            Some((m.left, m.top, m.right - m.left, m.bottom - m.top, dpi_x as f64 / 96.0))
+        }
+    }
+
+    /// A picture of the whole monitor under the cursor, as it is right now.
+    pub fn capture_cursor_monitor() -> Option<super::Screen> {
+        use windows_sys::Win32::Graphics::Gdi::{
+            BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, ReleaseDC,
+            SelectObject, BITMAPINFO, BITMAPINFOHEADER, CAPTUREBLT, DIB_RGB_COLORS, SRCCOPY,
+        };
+        let (x, y, width, height, scale) = cursor_monitor()?;
+        if width <= 0 || height <= 0 {
+            return None;
+        }
+        unsafe {
+            let screen = GetDC(std::ptr::null_mut());
+            if screen.is_null() {
+                return None;
+            }
+            let memory = CreateCompatibleDC(screen);
+            let bitmap = CreateCompatibleBitmap(screen, width, height);
+            let mut pixels = vec![0u8; width as usize * height as usize * 4];
+            let mut copied = false;
+            if !memory.is_null() && !bitmap.is_null() {
+                let previous = SelectObject(memory, bitmap);
+                // CAPTUREBLT: layered windows (menus, tooltips, our own notch) too.
+                let blitted = BitBlt(memory, 0, 0, width, height, screen, x, y, SRCCOPY | CAPTUREBLT) != 0;
+                // GetDIBits wants the bitmap out of any device context.
+                SelectObject(memory, previous);
+                let mut info: BITMAPINFO = std::mem::zeroed();
+                info.bmiHeader = BITMAPINFOHEADER {
+                    biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                    biWidth: width,
+                    // Negative: rows from the top, as an image has them.
+                    biHeight: -height,
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    ..std::mem::zeroed()
+                };
+                let rows =
+                    GetDIBits(screen, bitmap, 0, height as u32, pixels.as_mut_ptr().cast(), &mut info, DIB_RGB_COLORS);
+                copied = blitted && rows == height;
+            }
+            if !bitmap.is_null() {
+                DeleteObject(bitmap);
+            }
+            if !memory.is_null() {
+                DeleteDC(memory);
+            }
+            ReleaseDC(std::ptr::null_mut(), screen);
+            if !copied {
+                return None;
+            }
+            // BGRX → RGBA.
+            for px in pixels.as_chunks_mut::<4>().0 {
+                px.swap(0, 2);
+                px[3] = 255;
+            }
+            Some(super::Screen { x, y, width: width as u32, height: height as u32, scale, rgba: pixels })
+        }
+    }
+
+    /// Opens Explorer with the file selected.
+    pub fn reveal(path: &str) -> bool {
+        use std::os::windows::process::CommandExt;
+        // Explorer wants the quotes around the path only, not the whole argument.
+        let path = path.replace('/', "\\").replace('"', "");
+        std::process::Command::new("explorer").raw_arg(format!("/select,\"{path}\"")).spawn().is_ok()
+    }
+
     /// Opens a URL in the default browser (or a file/folder in its app).
     pub fn shell_open(target: &str) -> bool {
         use windows_sys::Win32::UI::Shell::ShellExecuteW;
@@ -563,6 +654,15 @@ mod imp {
     pub fn shell_open(target: &str) -> bool {
         std::process::Command::new("xdg-open").arg(target).spawn().is_ok()
     }
+    pub fn cursor_monitor() -> Option<(i32, i32, i32, i32, f64)> {
+        None
+    }
+    pub fn capture_cursor_monitor() -> Option<super::Screen> {
+        None
+    }
+    pub fn reveal(path: &str) -> bool {
+        std::path::Path::new(path).parent().is_some_and(|dir| shell_open(&dir.to_string_lossy()))
+    }
     pub fn claim_single_instance(_: &str) -> bool {
         true
     }
@@ -572,6 +672,17 @@ mod imp {
     pub fn autostart_set(_: &str, _: Option<&str>) -> Result<(), String> {
         Err("автозапуск есть только в Windows".into())
     }
+}
+
+/// A frozen picture of one monitor (physical pixels, RGBA).
+#[allow(dead_code)]
+pub struct Screen {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub scale: f64,
+    pub rgba: Vec<u8>,
 }
 
 pub use imp::*;

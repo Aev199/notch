@@ -90,6 +90,7 @@ export function SettingsPanel({ settings, autostart, dataDir, onSaved, onAutosta
           <span>Горячая клавиша</span>
           <input value={draft.hotkey} placeholder="Ctrl+Alt+T" onChange={(e) => set("hotkey", e.target.value)} />
         </label>
+        <p className="hint">Переводит текст из буфера и ставит курсор в поле перевода.</p>
         <label className="check">
           <input type="checkbox" checked={draft.doubleCopyTranslate} onChange={(e) => set("doubleCopyTranslate", e.target.checked)} />
           <span>Переводить по двойному Ctrl+C</span>
@@ -99,9 +100,23 @@ export function SettingsPanel({ settings, autostart, dataDir, onSaved, onAutosta
       <section>
         <h3>Буфер и полка</h3>
         <label className="check">
-          <input type="checkbox" checked={draft.captureImages} onChange={(e) => set("captureImages", e.target.checked)} />
-          <span>Складывать скриншоты на полку</span>
+          <input type="checkbox" checked={draft.capturePrintscreen} onChange={(e) => set("capturePrintscreen", e.target.checked)} />
+          <span>PrintScreen открывает снимок экрана Notch: область, пометки, текст</span>
         </label>
+        <p className="hint">Выключите, если пользуетесь другой программой для скриншотов.</p>
+        <label className="check">
+          <input type="checkbox" checked={draft.captureImages} onChange={(e) => set("captureImages", e.target.checked)} />
+          <span>Складывать скриншоты из буфера на полку</span>
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={draft.filesShelf} onChange={(e) => set("filesShelf", e.target.checked)} />
+          <span>Вкладка «Файлы»: файлы, перетащенные на чёлку, ждут там</span>
+        </label>
+        <label className="row">
+          <span>Клавиша истории</span>
+          <input value={draft.historyHotkey} placeholder="Ctrl+Alt+B" onChange={(e) => set("historyHotkey", e.target.value)} />
+        </label>
+        <p className="hint">Открывает «Буфер» с курсором в поиске: стрелки выбирают, Enter вставляет. Пусто — выключено.</p>
         <label className="row">
           <span>Скриншотов на полке</span>
           <input type="number" min={1} max={100} value={draft.shelfLimit} onChange={(e) => set("shelfLimit", Number(e.target.value))} />
@@ -128,6 +143,10 @@ export function SettingsPanel({ settings, autostart, dataDir, onSaved, onAutosta
             <input type="number" min={1} max={600} value={draft.idleSeconds} onChange={(e) => set("idleSeconds", Number(e.target.value))} />
           </label>
         )}
+        <label className="check">
+          <input type="checkbox" checked={draft.followCursor} onChange={(e) => set("followCursor", e.target.checked)} />
+          <span>Показывать на том мониторе, где курсор (иначе — на основном)</span>
+        </label>
         <label className="check">
           <input type="checkbox" checked={draft.hideInFullscreen} onChange={(e) => set("hideInFullscreen", e.target.checked)} />
           <span>Прятать совсем в эксклюзивном полноэкранном режиме игр и презентаций</span>

@@ -13,17 +13,25 @@ use crate::win;
 
 /// Fullscreen check and window housekeeping run this often.
 const SLOW_EVERY: Duration = Duration::from_millis(900);
+/// With "follow the cursor" the notch changes monitors this quickly.
+const FOLLOW_EVERY: Duration = Duration::from_millis(200);
 
-/// Puts the stage at the top centre of the primary monitor.
+/// Puts the stage at the top centre of its monitor: the primary one, or
+/// (an option) the one the cursor is on.
 pub fn place_window(app: &AppHandle) {
     let Some(window) = app.get_webview_window("main") else { return };
-    let Ok(Some(monitor)) = window.primary_monitor() else { return };
-    let scale = monitor.scale_factor();
+    let follow = lock(&app.state::<Shared>().settings).follow_cursor;
+    let under_cursor = if follow { win::cursor_monitor() } else { None };
+    let (left, top, width, scale) = match under_cursor {
+        Some((x, y, w, _, scale)) => (x, y, w, scale),
+        None => {
+            let Ok(Some(monitor)) = window.primary_monitor() else { return };
+            (monitor.position().x, monitor.position().y, monitor.size().width as i32, monitor.scale_factor())
+        }
+    };
     let (w, h) = ((STAGE_W * scale).round() as i32, (STAGE_H * scale).round() as i32);
-    let pos = monitor.position();
-    let size = monitor.size();
-    let x = pos.x + (size.width as i32 - w) / 2;
-    let target = PhysicalPosition::new(x, pos.y);
+    let x = left + (width - w) / 2;
+    let target = PhysicalPosition::new(x, top);
     let current_size = window.outer_size().ok();
     if current_size.map(|s| (s.width as i32, s.height as i32)) != Some((w, h)) {
         let _ = window.set_size(tauri::PhysicalSize::new(w as u32, h as u32));
@@ -49,6 +57,7 @@ const NEAR_BAND: f64 = 120.0;
 fn run(app: AppHandle) {
     let shared = app.state::<Shared>().inner().clone();
     let mut last_slow = Instant::now();
+    let mut last_follow = Instant::now();
     let mut force_thin = false;
     let mut delay = FAST;
     let mut last_tick = now_ms();
@@ -76,7 +85,18 @@ fn run(app: AppHandle) {
             last_slow = Instant::now();
             force_thin = housekeeping(&app, &shared, hwnd);
         }
-        if shared.hidden_for_fullscreen.load(Ordering::Relaxed) {
+        let hidden = shared.hidden_for_fullscreen.load(Ordering::Relaxed);
+        // The notch goes where the cursor went — but never from under it:
+        // not while open, typed into, or pressed.
+        if !hidden && last_follow.elapsed() >= FOLLOW_EVERY {
+            last_follow = Instant::now();
+            let follow = lock(&shared.settings).follow_cursor;
+            let busy = lock(&shared.hover).is_expanded() || win::left_button_down();
+            if follow && !busy {
+                place_window(&app);
+            }
+        }
+        if hidden {
             win::apply_styles(hwnd, true);
             delay = SLOW;
             continue;
@@ -88,9 +108,9 @@ fn run(app: AppHandle) {
         };
         let stage = Rect { x, y, w, h };
         let (ew, eh) = *lock(&shared.expanded_size);
-        let idle_thin_ms = {
+        let (idle_thin_ms, drag_opens) = {
             let s = lock(&shared.settings);
-            s.idle_thin.then_some(s.idle_seconds * 1000)
+            (s.idle_thin.then_some(s.idle_seconds * 1000), s.files_shelf)
         };
         let sample = Sample {
             now_ms: now_ms(),
@@ -102,6 +122,7 @@ fn run(app: AppHandle) {
             left_button_down: win::left_button_down(),
             idle_thin_ms,
             force_thin,
+            drag_opens,
         };
         let (transition, interactive, expanded) = {
             let mut machine = lock(&shared.hover);
@@ -135,8 +156,11 @@ fn housekeeping(app: &AppHandle, shared: &Shared, hwnd: isize) -> bool {
         win::show_no_activate(hwnd, true);
     }
     if !shared.hidden_for_fullscreen.load(Ordering::Relaxed) {
-        // Follows resolution / DPI / primary-monitor changes.
-        place_window(app);
+        // Follows resolution / DPI / primary-monitor changes. An open island
+        // stays where it is (with "follow the cursor" it would jump away).
+        if !expanded {
+            place_window(app);
+        }
         win::keep_topmost(hwnd);
     }
     win::busy_fullscreen_active() || win::foreground_fills_monitor(hwnd)

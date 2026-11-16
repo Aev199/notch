@@ -5,6 +5,7 @@
 //! clipboard, window and network.
 
 pub mod clipboard;
+pub mod files;
 pub mod hover;
 pub mod ocr;
 pub mod settings;
