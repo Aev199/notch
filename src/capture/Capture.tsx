@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { api, errorText, on } from "../lib/api";
+import { framesPresented } from "../lib/frames";
 import { COLORS, DEFAULT_FONT, DEFAULT_WIDTH, render, textPx, unitOf, type Box, type Pt, type Shape } from "../editor/draw";
 import { ToolIcon } from "../editor/icons";
 import { extendMark, isTiny, MARK_TOOLS, nextFont, nextWidth, startMark, textMark, type MarkTool } from "../editor/marks";
@@ -30,19 +31,6 @@ type Drag =
   | { kind: "draw" };
 
 const GAP = 8;
-
-/** Resolves after two frames have been presented, or after `ms` at most. */
-function framesPresented(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = window.setTimeout(resolve, ms);
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
-        window.clearTimeout(timer);
-        resolve();
-      }),
-    );
-  });
-}
 
 export function Capture() {
   const [img, setImg] = useState<ImageBitmap | null>(null);

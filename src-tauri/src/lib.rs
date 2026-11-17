@@ -229,8 +229,8 @@ async fn open_editor(id: String, app: AppHandle, state: State<'_, Shared>) -> Re
     }
     state::close_island(&app);
     if let Some(editor) = app.get_webview_window("editor") {
+        // It comes forward once the new picture is drawn (`editor_show`).
         let _ = editor.emit("editor-open", &id);
-        bring_to_front(&editor);
         return Ok(());
     }
     let (w, h) = app
@@ -248,11 +248,40 @@ async fn open_editor(id: String, app: AppHandle, state: State<'_, Shared>) -> Re
         .inner_size(w.max(720.0), h.max(480.0))
         .min_inner_size(640.0, 420.0)
         .center()
-        .focused(true)
+        .background_color(tauri::window::Color(0x11, 0x11, 0x13, 0xff))
+        .visible(false)
         .build()
         .map_err(|e| e.to_string())?;
-    bring_to_front(&editor);
+    // Shown cloaked: the page loads and draws unseen, then `editor_show`
+    // reveals it. Without that, an empty white page flashes first.
+    win::cloak(capture::hwnd_of(&editor), true);
+    EDITOR_CLOAKED.store(true, Ordering::SeqCst);
+    let _ = editor.show();
+    // Should the page never report (it failed to load), show it anyway.
+    let late = editor.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(2_500));
+        reveal_editor(&late);
+    });
     Ok(())
+}
+
+/// The editor window exists but is still cloaked (waiting for its page).
+static EDITOR_CLOAKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn reveal_editor(editor: &tauri::WebviewWindow) {
+    if EDITOR_CLOAKED.swap(false, Ordering::SeqCst) {
+        win::cloak(capture::hwnd_of(editor), false);
+    }
+    bring_to_front(editor);
+}
+
+/// The editor has drawn its picture: on screen and in front.
+#[tauri::command]
+async fn editor_show(app: AppHandle) {
+    if let Some(editor) = app.get_webview_window("editor") {
+        reveal_editor(&editor);
+    }
 }
 
 /// Opens a window in front of everything, then lets it be an ordinary
@@ -646,6 +675,7 @@ pub fn run() {
             shelf_copy,
             shelf_image,
             open_editor,
+            editor_show,
             ocr_png,
             clipboard_image,
             capture::capture_image,

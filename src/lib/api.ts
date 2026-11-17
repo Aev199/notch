@@ -154,6 +154,8 @@ export const api = {
   pinEntry: (id: number, pinned: boolean) => invoke("pin_entry", { id, pinned }),
   shelfImage: (id: string) => invoke<ArrayBuffer>("shelf_image", { id }),
   openEditor: (id: string) => invoke("open_editor", { id }),
+  /** The editor has drawn its picture: show it and bring it forward. */
+  editorShow: () => invoke("editor_show"),
   /** Raw PNG in, recognised text out (Windows OCR). */
   ocrPng: (png: Uint8Array) => invoke<OcrText>("ocr_png", png),
   pasteText: (text: string) => invoke("paste_text", { text }),

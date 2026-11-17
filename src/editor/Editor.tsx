@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, direction, errorText, on, type Provider, type ShelfItem, type Translation } from "../lib/api";
 import { translate } from "../lib/translate";
 import { isSuperseded } from "../lib/offline";
+import { framesPresented } from "../lib/frames";
 import {
   COLORS,
   DEFAULT_FONT,
@@ -136,6 +137,11 @@ export function Editor({ initialId }: { initialId: string }) {
     } catch (e) {
       setStatus(errorText(e));
     }
+    // The picture is drawn on the next frame: once it is presented, the
+    // window comes forward (a new one leaves its cloak only now — no white
+    // flash of an empty page).
+    await framesPresented(400, 3);
+    void api.editorShow().catch(() => {});
   }, []);
 
   useEffect(() => {
