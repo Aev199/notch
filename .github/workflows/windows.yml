@@ -149,6 +149,9 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: v${{ needs.build.outputs.version }}
+          # The tag goes on the commit that was built. Without it GitHub puts
+          # a new tag on the default branch, whatever branch the EXE is from.
+          target_commitish: ${{ github.sha }}
           name: Notch ${{ needs.build.outputs.version }}
           body_path: notes.md
           files: |
