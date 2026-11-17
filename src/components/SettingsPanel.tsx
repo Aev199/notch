@@ -134,6 +134,11 @@ export function SettingsPanel({ settings, autostart, dataDir, onSaved, onAutosta
       <section>
         <h3>Поведение</h3>
         <label className="check">
+          <input type="checkbox" checked={draft.animations} onChange={(e) => set("animations", e.target.checked)} />
+          <span>Анимации интерфейса</span>
+        </label>
+        <p className="hint">Плавные переходы в чёлке, редакторе и снимке экрана. Работают и при системной настройке «уменьшение движения».</p>
+        <label className="check">
           <input type="checkbox" checked={draft.idleThin} onChange={(e) => set("idleThin", e.target.checked)} />
           <span>Сворачивать в тонкую полосу при бездействии</span>
         </label>

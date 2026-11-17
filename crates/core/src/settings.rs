@@ -52,6 +52,9 @@ pub struct Settings {
     pub files_shelf: bool,
     /// Show the notch on the monitor the cursor is on (otherwise: primary).
     pub follow_cursor: bool,
+    /// Interface animations. On, they play even when Windows asks for
+    /// reduced motion; off, there are none (this switch is the one that counts).
+    pub animations: bool,
 }
 
 impl Default for Settings {
@@ -77,6 +80,7 @@ impl Default for Settings {
             history_hotkey: "Ctrl+Alt+B".into(),
             files_shelf: true,
             follow_cursor: false,
+            animations: true,
         }
     }
 }

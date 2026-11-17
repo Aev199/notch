@@ -965,3 +965,12 @@ textarea {
   width: 380px;
   height: 220px;
 }
+
+/* "Анимации интерфейса" off: no transitions or animations anywhere (the
+   busy spinner keeps turning — it says something is happening). */
+html.no-anim *:not(.spinner),
+html.no-anim *::before,
+html.no-anim *::after {
+  transition: none !important;
+  animation: none !important;
+}

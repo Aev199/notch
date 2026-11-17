@@ -23,7 +23,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, DragDropEvent, Manager, State, WindowEvent};
+use tauri::{AppHandle, DragDropEvent, Emitter, Manager, State, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 use state::{lock, App, Shared};
@@ -223,7 +223,7 @@ async fn run_ocr(w: u32, h: u32, rgba: Vec<u8>) -> Result<ocr::OcrText, String> 
 /// a sync command (run on the main thread) deadlocks on Windows (tauri#4121).
 #[tauri::command]
 async fn open_editor(id: String, app: AppHandle, state: State<'_, Shared>) -> Result<(), String> {
-    use tauri::{Emitter, WebviewUrl, WebviewWindowBuilder};
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
     if lock(&state.shelf).get(&id).is_none() {
         return Err("скриншот не найден".into());
     }
@@ -549,7 +549,14 @@ fn save_settings(new: Settings, app: AppHandle, state: State<'_, Shared>) -> Res
     state::emit_shelf(&app);
     // The monitor option takes effect at once, not on the next slow tick.
     overlay::place_window(&app);
+    // The editor and capture windows follow along (animations).
+    let _ = app.emit("settings", &new);
     Ok(new)
+}
+
+#[tauri::command]
+fn get_settings(state: State<'_, Shared>) -> Settings {
+    lock(&state.settings).clone()
 }
 
 #[tauri::command]
@@ -715,6 +722,7 @@ pub fn run() {
             translate,
             clipboard_text,
             save_settings,
+            get_settings,
             set_autostart,
             quit,
         ])

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion, MotionConfig } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import {
   api,
   errorText,
@@ -139,7 +139,7 @@ export default function App() {
   const shownTab: Tab = tab === "files" && !filesOn ? "shelf" : tab;
 
   return (
-    <MotionConfig reducedMotion="user">
+    <>
       <div className="stage">
         <motion.div
           className={`island is-${mode}`}
@@ -261,6 +261,6 @@ export default function App() {
           </AnimatePresence>
         </motion.div>
       </div>
-    </MotionConfig>
+    </>
   );
 }

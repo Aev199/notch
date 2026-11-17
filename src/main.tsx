@@ -4,6 +4,7 @@ import App from "./App";
 import { Editor } from "./editor/Editor";
 import { Capture } from "./capture/Capture";
 import "./styles.css";
+import { MotionRoot } from "./lib/MotionRoot";
 import "./editor/editor.css";
 
 // No browser context menu (except in text fields: copy/paste), no accidental zoom.
@@ -21,5 +22,7 @@ if (editorId) document.documentElement.classList.add("is-editor");
 if (capture) document.documentElement.classList.add("is-capture");
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>{capture ? <Capture /> : editorId ? <Editor initialId={editorId} /> : <App />}</React.StrictMode>,
+  <React.StrictMode>
+    <MotionRoot>{capture ? <Capture /> : editorId ? <Editor initialId={editorId} /> : <App />}</MotionRoot>
+  </React.StrictMode>,
 );

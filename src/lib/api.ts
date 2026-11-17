@@ -75,6 +75,7 @@ export interface Settings {
   historyHotkey: string;
   filesShelf: boolean;
   followCursor: boolean;
+  animations: boolean;
 }
 
 export interface UpdateOffer {
