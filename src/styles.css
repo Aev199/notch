@@ -992,3 +992,77 @@ html.no-anim *::after {
   transition: none !important;
   animation: none !important;
 }
+
+/* ---- Motion ------------------------------------------------------------
+   Short, ease-out, no overshoot. Everything here is switched off with the
+   app's "Анимации интерфейса" (html.no-anim, above). */
+
+/* Hover and press fade in instead of snapping. */
+.btn,
+.icon-btn,
+.tab,
+.clip,
+.file,
+.tile,
+.search,
+.ed-tool,
+.ed-color,
+.settings input,
+.settings select {
+  transition:
+    background-color 0.1s ease-out,
+    color 0.1s ease-out,
+    box-shadow 0.12s ease-out,
+    scale 0.12s ease-out;
+}
+
+/* Row and tile buttons appear softly when the pointer arrives. */
+.clip:hover .clip-actions,
+.file:hover .clip-actions,
+.tile:hover .tile-actions {
+  animation: appear 0.12s ease-out both;
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
+}
+
+/* "Done" ticks pop in (copy → ✓). */
+.pop {
+  animation: pop 0.18s ease-out both;
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    scale: 0.6;
+  }
+}
+
+/* Opening the island: the tabs, then the first rows or tiles, one after
+   another. Only while it opens (App sets .opening for a moment). */
+@keyframes rise {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+  }
+}
+
+.full.opening .tabs {
+  animation: rise 0.16s ease-out both;
+}
+
+.full.opening :is(.tile, .clip, .file, .search, .files-bar, .translate, .settings section, .empty) {
+  animation: rise 0.18s ease-out both;
+  animation-delay: 40ms;
+}
+
+.full.opening :is(.tile, .clip, .file):nth-child(2) { animation-delay: 60ms; }
+.full.opening :is(.tile, .clip, .file):nth-child(3) { animation-delay: 80ms; }
+.full.opening :is(.tile, .clip, .file):nth-child(4) { animation-delay: 100ms; }
+.full.opening :is(.tile, .clip, .file):nth-child(5) { animation-delay: 120ms; }
+.full.opening :is(.tile, .clip, .file):nth-child(6) { animation-delay: 140ms; }
+.full.opening :is(.tile, .clip, .file):nth-child(7) { animation-delay: 160ms; }
+.full.opening :is(.tile, .clip, .file):nth-child(n + 8) { animation-delay: 180ms; }

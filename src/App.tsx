@@ -68,6 +68,14 @@ export default function App() {
   const toastTimer = useRef<number>();
   // One counter for every request to the translator, whatever its source.
   const requestSeq = useRef(0);
+  // The island has just opened: its content comes in one after another.
+  const [opening, setOpening] = useState(false);
+  useEffect(() => {
+    if (mode !== "open") return;
+    setOpening(true);
+    const t = window.setTimeout(() => setOpening(false), 450);
+    return () => window.clearTimeout(t);
+  }, [mode]);
   // Which way the content slides when the tab changes.
   const lastTab = useRef<Tab>(tab);
   // Re-render once a minute so "5 мин" labels stay true while open.
@@ -177,7 +185,7 @@ export default function App() {
             {mode === "open" && (
               <motion.div
                 key="full"
-                className="full"
+                className={`full${opening ? " opening" : ""}`}
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1, transition: { duration: 0.12, delay: 0.04 } }}
                 exit={{ opacity: 0, transition: { duration: 0.05 } }}

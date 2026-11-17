@@ -260,7 +260,7 @@ export function Shelf({ items, onError, onNotice }: Props) {
                 {tile.kind === "shot" ? (
                   <>
                     <button className="icon-btn small" title="Копировать" onClick={() => void copy(first)}>
-                      {copied === first.id ? <CheckIcon width={13} height={13} /> : <CopyIcon width={13} height={13} />}
+                      {copied === first.id ? <CheckIcon className="pop" width={13} height={13} /> : <CopyIcon width={13} height={13} />}
                     </button>
                     <button className="icon-btn small" title="В проект Papka…" onClick={() => setSending(first)}>
                       <ProjectIcon width={13} height={13} />

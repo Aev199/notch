@@ -148,7 +148,7 @@ export function Translate({ incoming, provider, providerName }: Props) {
             disabled={!result}
             onClick={() => void copy()}
           >
-            {copied ? <CheckIcon width={14} height={14} /> : <CopyIcon width={14} height={14} />}
+            {copied ? <CheckIcon className="pop" width={14} height={14} /> : <CopyIcon width={14} height={14} />}
           </button>
         </div>
         <div
