@@ -156,7 +156,10 @@ export function Translate({ incoming, provider, providerName }: Props) {
           title={result ? "Клик — скопировать" : undefined}
           onClick={() => void copy()}
         >
-          {error ?? result?.text ?? <span className="dim">Перевод</span>}
+          {/* A new result (or error) fades in; while busy the old one pales. */}
+          <span key={error ?? result?.text ?? ""} className="swap">
+            {error ?? result?.text ?? <span className="dim">Перевод</span>}
+          </span>
         </div>
       </div>
     </div>

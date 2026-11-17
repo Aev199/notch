@@ -633,6 +633,10 @@ textarea {
   cursor: copy;
 }
 
+.result-text {
+  transition: opacity 0.15s ease-out;
+}
+
 .pane.result.busy .result-text {
   opacity: 0.5;
 }
@@ -1066,3 +1070,47 @@ html.no-anim *::after {
 .full.opening :is(.tile, .clip, .file):nth-child(6) { animation-delay: 140ms; }
 .full.opening :is(.tile, .clip, .file):nth-child(7) { animation-delay: 160ms; }
 .full.opening :is(.tile, .clip, .file):nth-child(n + 8) { animation-delay: 180ms; }
+
+/* A translation (or an error) fades in when it changes. */
+.result-text .swap {
+  display: block;
+  animation: appear 0.16s ease-out both;
+}
+
+/* Rolling counters: the leaving and the arriving number share one cell. */
+.roll {
+  display: inline-grid;
+  overflow: hidden;
+  vertical-align: bottom;
+  font-variant-numeric: tabular-nums;
+}
+
+.roll > * {
+  grid-area: 1 / 1;
+}
+
+/* Grouping: the screenshot under the dragged one leans in. */
+.tile.drop-hot {
+  scale: 1.04;
+}
+
+/* Where a dragged file will land on the Files tab. */
+.file-drop {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  margin-bottom: 4px;
+  border: 1.5px dashed var(--accent);
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 12px;
+  animation: drop-breathe 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes drop-breathe {
+  to {
+    border-color: rgba(138, 180, 255, 0.45);
+  }
+}

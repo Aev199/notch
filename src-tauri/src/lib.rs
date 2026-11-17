@@ -764,8 +764,18 @@ pub fn run() {
                     let ours = lock(&shared.hover).is_dragging();
                     match drag {
                         _ if !enabled || ours => {}
-                        DragDropEvent::Enter { .. } => state::open_island(&blur_handle, Some("files"), 6_000, false),
-                        DragDropEvent::Drop { paths, .. } => take_files(&blur_handle, paths),
+                        // "file-drag": the Files tab shows where the file will go.
+                        DragDropEvent::Enter { .. } => {
+                            let _ = blur_handle.emit("file-drag", true);
+                            state::open_island(&blur_handle, Some("files"), 6_000, false);
+                        }
+                        DragDropEvent::Drop { paths, .. } => {
+                            let _ = blur_handle.emit("file-drag", false);
+                            take_files(&blur_handle, paths);
+                        }
+                        DragDropEvent::Leave => {
+                            let _ = blur_handle.emit("file-drag", false);
+                        }
                         _ => {}
                     }
                 }

@@ -24,6 +24,7 @@ import { Translate, type Incoming } from "./components/Translate";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { AddImageIcon, ClipIcon, CloseIcon, FileIcon, GearIcon, ImageIcon } from "./components/Icons";
 import { updatePending } from "./components/Updates";
+import { Roll } from "./components/Roll";
 
 /** Logical sizes; compact and open must match the backend hitboxes. */
 const SIZES: Record<Mode, { width: number; height: number; radius: number }> = {
@@ -35,6 +36,9 @@ const SIZES: Record<Mode, { width: number; height: number; radius: number }> = {
 /** Plain ease-out, no overshoot. */
 const EASE = [0.2, 0.8, 0.2, 1] as const;
 const RESIZE = { type: "tween" as const, ease: EASE, duration: 0.18 };
+/** The island's colour (--island) and the tint of a pulse on the strip. */
+const ISLAND_BG = "rgb(17, 17, 19)";
+const PULSE_BG = "rgb(138, 180, 255)";
 const TAB_LINE = { type: "tween" as const, ease: EASE, duration: 0.16 };
 
 /** Left to right as on screen; the gear is last. */
@@ -62,6 +66,13 @@ export default function App() {
   const [autostart, setAutostart] = useState(false);
   const [incoming, setIncoming] = useState<Incoming | null>(null);
   const [flash, setFlash] = useState<"shelf" | "clipboard" | null>(null);
+  // Something was caught while the island is a thin strip: it stretches
+  // and tints for a moment instead of waking up.
+  const [pulse, setPulse] = useState(0);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  // A file is being dragged over the island (the Files tab shows its place).
+  const [fileDrag, setFileDrag] = useState(false);
   const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(null);
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const flashTimer = useRef<number>();
@@ -113,9 +124,11 @@ export default function App() {
       on<TextEntry[]>("texts", setTexts),
       on<ShelfItem[]>("shelf", setShelf),
       on<FileEntry[]>("files", setFiles),
+      on<boolean>("file-drag", setFileDrag),
       on<TranslateRequest>("translate-request", (r) => setIncoming({ ...r, seq: ++requestSeq.current })),
       on<"shelf" | "clipboard">("captured", (kind) => {
         setFlash(kind);
+        if (modeRef.current === "thin") setPulse((n) => n + 1);
         window.clearTimeout(flashTimer.current);
         flashTimer.current = window.setTimeout(() => setFlash(null), 1400);
       }),
@@ -146,6 +159,14 @@ export default function App() {
   const showNotice = (message: string) => showToast(message, true);
 
   const size = SIZES[mode];
+  const [pulsing, setPulsing] = useState(false);
+  useEffect(() => {
+    if (!pulse) return;
+    setPulsing(true);
+    const t = window.setTimeout(() => setPulsing(false), 480);
+    return () => window.clearTimeout(t);
+  }, [pulse]);
+  const stripPulse = pulsing && mode === "thin";
   const providerName = settings ? PROVIDER_NAMES[settings.provider] : "";
   const counts: Record<string, number> = { shelf: shelf.length, files: files.length, clipboard: texts.length };
   const filesOn = settings?.filesShelf ?? false;
@@ -164,12 +185,13 @@ export default function App() {
           className={`island is-${mode}`}
           initial={false}
           animate={{
-            width: size.width,
+            width: stripPulse ? [size.width, size.width + 36, size.width] : size.width,
             height: size.height,
             borderBottomLeftRadius: size.radius,
             borderBottomRightRadius: size.radius,
+            backgroundColor: stripPulse ? [ISLAND_BG, PULSE_BG, ISLAND_BG] : ISLAND_BG,
           }}
-          transition={RESIZE}
+          transition={stripPulse ? { duration: 0.46, times: [0, 0.35, 1], ease: EASE } : RESIZE}
           onFocusCapture={(e) => {
             const el = e.target as HTMLElement;
             if (el.matches("input, textarea, select")) void api.beginInput();
@@ -194,7 +216,11 @@ export default function App() {
                   {tabs.map(({ id, title }) => (
                     <button key={id} className={`tab${shownTab === id ? " active" : ""}`} onClick={() => setTab(id)}>
                       {title}
-                      {counts[id] > 0 && <span className="tab-count">{counts[id]}</span>}
+                      {counts[id] > 0 && (
+                        <span className="tab-count">
+                          <Roll value={counts[id]} />
+                        </span>
+                      )}
                       {shownTab === id && <motion.span layoutId="tab-line" className="tab-line" transition={TAB_LINE} />}
                     </button>
                   ))}
@@ -243,7 +269,7 @@ export default function App() {
                     transition={{ type: "tween", ease: EASE, duration: 0.16 }}
                   >
                   {shownTab === "shelf" && <Shelf items={shelf} onError={showError} onNotice={showNotice} />}
-                  {shownTab === "files" && snapshot && <Files entries={files} icon={snapshot.fileIcon} onError={showError} onNotice={showNotice} />}
+                  {shownTab === "files" && snapshot && <Files entries={files} dropping={fileDrag} icon={snapshot.fileIcon} onError={showError} onNotice={showNotice} />}
                   {tab === "clipboard" && <Clipboard entries={texts} focusSeq={clipFocus} onError={showError} onNotice={showNotice} />}
                   {tab === "translate" && settings && (
                     <Translate incoming={incoming} provider={settings.provider} providerName={providerName} />
@@ -272,17 +298,17 @@ export default function App() {
               >
                 <span className={`count${flash === "shelf" ? " hot" : ""}`}>
                   <ImageIcon width={13} height={13} />
-                  {shelf.length}
+                  <Roll value={shelf.length} />
                 </span>
                 {filesOn && files.length > 0 && (
                   <span className="count">
                     <FileIcon width={13} height={13} />
-                    {files.length}
+                    <Roll value={files.length} />
                   </span>
                 )}
                 <span className={`count${flash === "clipboard" ? " hot" : ""}`}>
                   <ClipIcon width={13} height={13} />
-                  {texts.length}
+                  <Roll value={texts.length} />
                 </span>
               </motion.div>
             )}

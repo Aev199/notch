@@ -10,6 +10,8 @@ const DRAG_THRESHOLD = 5;
 
 interface Props {
   entries: FileEntry[];
+  /** A file is being dragged over the notch: show where it will go. */
+  dropping: boolean;
   /** Picture shown under the cursor while files are dragged out. */
   icon: string;
   onError: (message: string) => void;
@@ -30,7 +32,7 @@ function folder(path: string): string {
   return cut > 0 ? path.slice(0, cut) : path;
 }
 
-export function Files({ entries, icon, onError, onNotice }: Props) {
+export function Files({ entries, dropping, icon, onError, onNotice }: Props) {
   // The file being sent to a Papka project (as a link).
   const [sending, setSending] = useState<FileEntry | null>(null);
   const press = useRef<{ entry: FileEntry; x: number; y: number } | null>(null);
@@ -73,7 +75,18 @@ export function Files({ entries, icon, onError, onNotice }: Props) {
     if (p?.entry.id === entry.id) void api.filesOpen(entry.id).catch((e) => onError(errorText(e)));
   };
 
+  const placeholder = (
+    <AnimatePresence initial={false}>
+      {dropping && (
+        <motion.div key="drop" className="file-drop" {...ROW}>
+          Отпустите — файл ляжет сюда
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+
   if (entries.length === 0) {
+    if (dropping) return <div className="files-wrap">{placeholder}</div>;
     return (
       <div className="empty">
         <p>Сюда можно положить файлы</p>
@@ -105,6 +118,7 @@ export function Files({ entries, icon, onError, onNotice }: Props) {
         </div>
       )}
       <motion.div layoutScroll className="files">
+        {placeholder}
         <AnimatePresence initial={false}>
         {entries.map((entry) => (
           <motion.div
