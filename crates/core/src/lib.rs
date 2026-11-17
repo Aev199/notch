@@ -8,6 +8,7 @@ pub mod clipboard;
 pub mod files;
 pub mod hover;
 pub mod ocr;
+pub mod papka;
 pub mod settings;
 pub mod shelf;
 pub mod text_history;

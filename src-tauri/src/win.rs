@@ -265,6 +265,50 @@ mod imp {
         key_down(VK_RBUTTON)
     }
 
+    /// The program and title of a window: `("acad.exe", "Корпус 2 — Сваи.dwg")`.
+    /// Either is empty when Windows does not tell.
+    pub fn window_source(raw: isize) -> (String, String) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowTextLengthW, GetWindowTextW};
+        if raw == 0 {
+            return (String::new(), String::new());
+        }
+        unsafe {
+            let length = GetWindowTextLengthW(hwnd(raw)).clamp(0, 1024);
+            let mut text = vec![0u16; length as usize + 1];
+            let copied = GetWindowTextW(hwnd(raw), text.as_mut_ptr(), text.len() as i32).max(0) as usize;
+            let title = String::from_utf16_lossy(&text[..copied.min(text.len())]);
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd(raw), &mut pid);
+            (process_exe(pid).unwrap_or_default(), title)
+        }
+    }
+
+    /// File name (lower case) of a process's program.
+    fn process_exe(pid: u32) -> Option<String> {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        if pid == 0 {
+            return None;
+        }
+        unsafe {
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if process.is_null() {
+                return None;
+            }
+            let mut buf = [0u16; 512];
+            let mut len = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(process, 0, buf.as_mut_ptr(), &mut len) != 0;
+            CloseHandle(process);
+            if !ok {
+                return None;
+            }
+            let path = String::from_utf16_lossy(&buf[..len as usize]);
+            path.rsplit(['\\', '/']).next().map(|n| n.to_lowercase())
+        }
+    }
+
     /// File name (lower case) of the program that put the current data on
     /// the clipboard, e.g. `excel.exe`.
     pub fn clipboard_owner_exe() -> Option<String> {
@@ -646,6 +690,9 @@ mod imp {
     pub fn show_no_activate(_: isize, _: bool) {}
     pub fn foreground_window() -> isize {
         0
+    }
+    pub fn window_source(_: isize) -> (String, String) {
+        (String::new(), String::new())
     }
     pub fn force_foreground(_: isize) {}
     pub fn send_paste() -> bool {

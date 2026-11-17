@@ -57,7 +57,7 @@ export default function App() {
   const [autostart, setAutostart] = useState(false);
   const [incoming, setIncoming] = useState<Incoming | null>(null);
   const [flash, setFlash] = useState<"shelf" | "clipboard" | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(null);
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const flashTimer = useRef<number>();
   const toastTimer = useRef<number>();
@@ -121,11 +121,14 @@ export default function App() {
     };
   }, []);
 
-  const showError = (message: string) => {
-    setToast(message);
+  const showToast = (text: string, ok: boolean) => {
+    setToast({ text, ok });
     window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(null), 3500);
   };
+  const showError = (message: string) => showToast(message, false);
+  /** Something done, not wrong: «Отправлено в …». */
+  const showNotice = (message: string) => showToast(message, true);
 
   const size = SIZES[mode];
   const providerName = settings ? PROVIDER_NAMES[settings.provider] : "";
@@ -212,9 +215,9 @@ export default function App() {
                   </button>
                 </header>
                 <main className="content">
-                  {shownTab === "shelf" && <Shelf items={shelf} onError={showError} />}
-                  {shownTab === "files" && snapshot && <Files entries={files} icon={snapshot.fileIcon} onError={showError} />}
-                  {tab === "clipboard" && <Clipboard entries={texts} focusSeq={clipFocus} onError={showError} />}
+                  {shownTab === "shelf" && <Shelf items={shelf} onError={showError} onNotice={showNotice} />}
+                  {shownTab === "files" && snapshot && <Files entries={files} icon={snapshot.fileIcon} onError={showError} onNotice={showNotice} />}
+                  {tab === "clipboard" && <Clipboard entries={texts} focusSeq={clipFocus} onError={showError} onNotice={showNotice} />}
                   {tab === "translate" && settings && (
                     <Translate incoming={incoming} provider={settings.provider} providerName={providerName} />
                   )}
@@ -228,7 +231,7 @@ export default function App() {
                     />
                   )}
                 </main>
-                {toast && <div className="toast">{toast}</div>}
+                {toast && <div className={`toast${toast.ok ? " ok" : ""}`}>{toast.text}</div>}
               </motion.div>
             )}
             {mode === "compact" && (

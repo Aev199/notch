@@ -13,5 +13,7 @@ base64 = "0.22"
 sha2 = "0.10"
 # Release signatures (pure Rust, no C toolchain).
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+# Local time with its offset for entries sent to Papka.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [dev-dependencies]

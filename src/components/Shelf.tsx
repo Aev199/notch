@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import { api, errorText, timeAgo, type ShelfItem } from "../lib/api";
-import { BackIcon, CheckIcon, CopyIcon, TrashIcon, UngroupIcon } from "./Icons";
+import { BackIcon, CheckIcon, CopyIcon, ProjectIcon, TrashIcon, UngroupIcon } from "./Icons";
+import { SendToProject } from "./SendToProject";
 
 const DRAG_THRESHOLD = 5;
 /** Drop target meaning "take it out of the group". */
@@ -26,6 +27,8 @@ interface Drag {
 interface Props {
   items: ShelfItem[];
   onError: (message: string) => void;
+  /** A short message that something was done. */
+  onNotice: (message: string) => void;
 }
 
 /** Loose screenshots and groups in one list, newest first. */
@@ -63,10 +66,12 @@ function dragOf(tile: Tile, x: number, y: number): Drag {
   };
 }
 
-export function Shelf({ items, onError }: Props) {
+export function Shelf({ items, onError, onNotice }: Props) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  // The screenshot being sent to a Papka project.
+  const [sending, setSending] = useState<ShelfItem | null>(null);
   const press = useRef<{ tile: Tile; x: number; y: number; pointer: number } | null>(null);
   const dragRef = useRef<Drag | null>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -248,6 +253,9 @@ export function Shelf({ items, onError }: Props) {
                     <button className="icon-btn small" title="Копировать" onClick={() => void copy(first)}>
                       {copied === first.id ? <CheckIcon width={13} height={13} /> : <CopyIcon width={13} height={13} />}
                     </button>
+                    <button className="icon-btn small" title="В проект Papka…" onClick={() => setSending(first)}>
+                      <ProjectIcon width={13} height={13} />
+                    </button>
                     {openGroup && (
                       <button className="icon-btn small" title="Вынуть из группы" onClick={() => void api.shelfUngroup(first.id)}>
                         <UngroupIcon width={13} height={13} />
@@ -271,6 +279,17 @@ export function Shelf({ items, onError }: Props) {
           );
         })}
       </div>
+      {sending && (
+        <SendToProject
+          what="снимок"
+          send={(project, caption) => api.papkaSendShelf(sending.id, project, caption)}
+          onDone={(message) => {
+            setSending(null);
+            onNotice(message);
+          }}
+          onClose={() => setSending(null)}
+        />
+      )}
       {drag && (
         <div className="drag-ghost" style={{ left: drag.x, top: drag.y }}>
           <img src={drag.thumb} alt="" />

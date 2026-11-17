@@ -10,7 +10,8 @@ import { COLORS, DEFAULT_FONT, DEFAULT_WIDTH, render, textPx, unitOf, type Box, 
 import { ToolIcon } from "../editor/icons";
 import { extendMark, isTiny, MARK_TOOLS, nextFont, nextWidth, startMark, textMark, type MarkTool } from "../editor/marks";
 import { ToolOptions } from "../editor/ToolOptions";
-import { CheckIcon, CloseIcon } from "../components/Icons";
+import { CheckIcon, CloseIcon, ProjectIcon } from "../components/Icons";
+import { SendToProject } from "../components/SendToProject";
 import { clampBox, moveBox, resizeBox, HANDLES, type Handle } from "./geometry";
 import "./capture.css";
 
@@ -56,6 +57,8 @@ export function Capture() {
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  // «В проект…» is open under the bar.
+  const [papka, setPapka] = useState(false);
   const [view, setView] = useState({ w: window.innerWidth, h: window.innerHeight });
   const [bar, setBar] = useState({ w: 0, h: 0 });
 
@@ -289,6 +292,14 @@ export function Capture() {
       await invoke("editor_result", png, { headers: { "x-notch-action": "save", "x-notch-source": "" } });
     });
 
+  /** «В проект…»: the picture as «Готово» would make it, into a Papka
+   *  project's inbox. The backend closes the window once it is written. */
+  const sendToProject = async (project: string, caption: string) => {
+    const typed = text && textMark(text.value, text.at, color, font);
+    const png = await exportPng(typed ? [...shapes, typed] : shapes);
+    return api.papkaSendCapture(png, project, caption);
+  };
+
   /** Reads the text in the area; `translate` sends it to the translator. */
   const readText = (translate: boolean) =>
     run(async () => {
@@ -304,7 +315,7 @@ export function Capture() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // The text field has its own keys (Enter, Esc).
-      if ((e.target as HTMLElement).closest?.("textarea, select")) return;
+      if ((e.target as HTMLElement).closest?.("textarea, select, input")) return;
       const { done, cancel, undo, redoOne, img, tool } = keys.current;
       const ctrl = e.ctrlKey || e.metaKey;
       if (e.key === "Escape") cancel();
@@ -461,6 +472,10 @@ export function Capture() {
             <button className="btn" disabled={busy} title="Распознать текст в области и перевести" onClick={() => void readText(true)}>
               Перевести
             </button>
+            <button className="btn" disabled={busy || !img} title="Сохранить снимок с подписью во «Входящие» проекта Papka" onClick={() => setPapka((open) => !open)}>
+              <ProjectIcon width={14} height={14} />
+              В проект…
+            </button>
             <button className="btn primary" disabled={busy} title="На полку и в буфер обмена (Enter)" onClick={() => void done()}>
               <CheckIcon width={14} height={14} />
               Готово
@@ -469,6 +484,19 @@ export function Capture() {
               <CloseIcon width={14} height={14} />
             </button>
           </div>
+        </div>
+      )}
+
+      {showBar && papka && (
+        <div
+          className="cap-papka"
+          style={{
+            left: Math.max(GAP, Math.min(barLeft + bar.w - 380, view.w - 380 - GAP)),
+            // Under the bar when there is room, otherwise above it.
+            top: barTop + bar.h + GAP + 220 <= view.h ? barTop + bar.h + GAP : Math.max(GAP, barTop - GAP - 220),
+          }}
+        >
+          <SendToProject what="снимок" send={sendToProject} onDone={() => setPapka(false)} onClose={() => setPapka(false)} />
         </div>
       )}
 
