@@ -2,8 +2,8 @@
 // even when Windows asks for reduced motion; off, there are none — Motion
 // gets `reducedMotion`, CSS transitions go through `html.no-anim`.
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { on, type Settings } from "./api";
+import { MotionGlobalConfig } from "motion/react";
+import { api, on, type Settings } from "./api";
 
 let current = true;
 const listeners = new Set<(on: boolean) => void>();
@@ -11,6 +11,9 @@ const listeners = new Set<(on: boolean) => void>();
 function apply(enabled: boolean) {
   current = enabled;
   document.documentElement.classList.toggle("no-anim", !enabled);
+  // reducedMotion="always" alone still fades opacity and colours: off
+  // means no animation at all, every one jumps to its end.
+  MotionGlobalConfig.skipAnimations = !enabled;
   listeners.forEach((l) => l(enabled));
 }
 
@@ -18,7 +21,8 @@ let started = false;
 function start() {
   if (started) return;
   started = true;
-  void invoke<Settings>("get_settings")
+  void api
+    .getSettings()
     .then((s) => apply(s.animations))
     .catch(() => {});
   void on<Settings>("settings", (s) => apply(s.animations));

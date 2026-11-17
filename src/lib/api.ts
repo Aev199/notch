@@ -166,6 +166,8 @@ export const api = {
   endInput: () => invoke("end_input"),
   translateOnline: (text: string) => invoke<Translation>("translate", { text }),
   clipboardText: () => invoke<string | null>("clipboard_text"),
+  /** Just the settings (the snapshot also carries every thumbnail). */
+  getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { new: settings }),
   setAutostart: (enabled: boolean) => invoke<boolean>("set_autostart", { enabled }),
   quit: () => invoke("quit"),

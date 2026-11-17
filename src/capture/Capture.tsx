@@ -98,6 +98,7 @@ export function Capture() {
       setDragging(false);
       setRevealed(false);
       setFlying(false);
+      setPapka(false);
       root.current?.querySelectorAll(".cap-fly").forEach((el) => el.remove());
       setView({ w: window.innerWidth, h: window.innerHeight });
       // A 4K screen is ~33 MB of pixels: free the previous one right away.
@@ -341,6 +342,8 @@ export function Capture() {
       setText(null);
       await flyToNotch(out);
       await api.captureClose();
+      // A full-screen picture is tens of MB: not kept until the next capture.
+      out.remove();
       // After the window is gone, so the notch is seen taking the picture.
       await invoke("editor_result", png, { headers: { "x-notch-action": "save", "x-notch-source": "" } });
     });
@@ -348,9 +351,16 @@ export function Capture() {
   /** «В проект…»: the picture as «Готово» would make it, into a Papka
    *  project's inbox. The backend closes the window once it is written. */
   const sendToProject = async (project: string, caption: string) => {
-    const typed = text && textMark(text.value, text.at, color, font);
-    const png = await exportPng(typed ? [...shapes, typed] : shapes);
-    return api.papkaSendCapture(png, project, caption);
+    // Busy like «Готово»: no second way out while this one is on its way.
+    setBusy(true);
+    try {
+      const typed = text && textMark(text.value, text.at, color, font);
+      const png = await exportPng(typed ? [...shapes, typed] : shapes);
+      return await api.papkaSendCapture(png, project, caption);
+    } catch (e) {
+      setBusy(false);
+      throw e;
+    }
   };
 
   /** Reads the text in the area; `translate` sends it to the translator. */

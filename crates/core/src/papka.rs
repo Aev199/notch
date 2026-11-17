@@ -32,8 +32,10 @@ pub struct Project {
 
 #[derive(Deserialize)]
 struct Registry {
+    /// Read entry by entry: one odd entry (no inbox yet, an older format)
+    /// must not hide the others.
     #[serde(default)]
-    projects: Vec<Project>,
+    projects: Vec<serde_json::Value>,
 }
 
 /// Where Papka lists its projects, given `%LOCALAPPDATA%`.
@@ -53,7 +55,12 @@ pub fn projects(registry: &Path) -> Result<Vec<Project>, String> {
     };
     let registry: Registry = serde_json::from_str(raw.trim_start_matches('\u{feff}'))
         .map_err(|e| format!("Список проектов Papka повреждён: {e}"))?;
-    Ok(registry.projects.into_iter().filter(|p| !p.id.is_empty() && !p.name.is_empty()).collect())
+    Ok(registry
+        .projects
+        .into_iter()
+        .filter_map(|entry| serde_json::from_value::<Project>(entry).ok())
+        .filter(|p| !p.id.is_empty() && !p.name.is_empty())
+        .collect())
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -220,6 +227,11 @@ mod tests {
         fs::write(&path, "\u{feff}{\"format\":1,\"program\":\"Papka\",\"projects\":[{\"id\":\"p-1\",\"name\":\"Корпус 2\",\"root\":\"Z:/044\",\"inbox\":\"Z:/044/_Входящие\"},{\"id\":\"\",\"name\":\"x\",\"inbox\":\"y\"}]}").unwrap();
         let list = projects(&path).unwrap();
         assert_eq!(list.len(), 1, "an entry without a number is left out");
+        // Entries without an inbox or with a null one are skipped; the rest stay.
+        fs::write(&path, r#"{"projects":[{"id":"p-0","name":"Новый"},{"id":"p-9","name":"Старый","inbox":null},{"id":"p-1","name":"Корпус 2","inbox":"Z:/044/_Входящие"}]}"#).unwrap();
+        assert_eq!(projects(&path).unwrap().iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["p-1"]);
+        fs::write(&path, "\u{feff}{\"format\":1,\"program\":\"Papka\",\"projects\":[{\"id\":\"p-1\",\"name\":\"Корпус 2\",\"root\":\"Z:/044\",\"inbox\":\"Z:/044/_Входящие\"},{\"id\":\"\",\"name\":\"x\",\"inbox\":\"y\"}]}").unwrap();
+        let list = projects(&path).unwrap();
         assert_eq!((list[0].name.as_str(), list[0].inbox.as_path()), ("Корпус 2", Path::new("Z:/044/_Входящие")));
         fs::write(&path, "{ broken").unwrap();
         assert!(projects(&path).unwrap_err().contains("повреждён"));

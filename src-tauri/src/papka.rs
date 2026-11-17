@@ -100,9 +100,11 @@ pub async fn papka_send_shelf(id: String, project: String, caption: String, stat
     send(&state, &project, Payload::Image(&png), &caption, &Source { app: "notch.exe".into(), window: "Полка снимков".into() })
 }
 
-/// A text from the clipboard history (or any text).
+/// A text from the clipboard history (or any text). Async like the others:
+/// the inbox is often on a network drive, and a slow one must not freeze
+/// the main thread.
 #[tauri::command]
-pub fn papka_send_text(text: String, project: String, caption: String, state: State<'_, Shared>) -> Result<String, String> {
+pub async fn papka_send_text(text: String, project: String, caption: String, state: State<'_, Shared>) -> Result<String, String> {
     if text.trim().is_empty() {
         return Err("пустой текст".into());
     }
@@ -111,7 +113,7 @@ pub fn papka_send_text(text: String, project: String, caption: String, state: St
 
 /// A file or folder from the file shelf: only its path goes.
 #[tauri::command]
-pub fn papka_send_file(id: u64, project: String, caption: String, state: State<'_, Shared>) -> Result<String, String> {
+pub async fn papka_send_file(id: u64, project: String, caption: String, state: State<'_, Shared>) -> Result<String, String> {
     let path = lock(&state.files).get(id).map(|e| PathBuf::from(&e.path)).ok_or("файла нет на полке")?;
     send(&state, &project, Payload::File(&path), &caption, &Source { app: "notch.exe".into(), window: "Полка файлов".into() })
 }

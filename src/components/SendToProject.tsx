@@ -53,6 +53,10 @@ export function SendToProject({ what, send, onDone, onClose }: Props) {
     }
   };
 
+  // The caption field took the keyboard (in the island that is input mode):
+  // closing the panel, by Esc, ✕ or a send, gives it back.
+  useEffect(() => () => void api.endInput(), []);
+
   const keys = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
       // Only this panel closes, not the island or the capture.

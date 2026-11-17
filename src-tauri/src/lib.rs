@@ -254,33 +254,42 @@ async fn open_editor(id: String, app: AppHandle, state: State<'_, Shared>) -> Re
         .map_err(|e| e.to_string())?;
     // Shown cloaked: the page loads and draws unseen, then `editor_show`
     // reveals it. Without that, an empty white page flashes first.
-    win::cloak(capture::hwnd_of(&editor), true);
-    EDITOR_CLOAKED.store(true, Ordering::SeqCst);
+    let hwnd = capture::hwnd_of(&editor);
+    win::cloak(hwnd, true);
+    EDITOR_CLOAKED.store(hwnd, Ordering::SeqCst);
     let _ = editor.show();
-    // Should the page never report (it failed to load), show it anyway.
+    // Should the page never report (it failed to load), show it anyway —
+    // only if this very window is still waiting: a timer of an editor
+    // closed meanwhile, or of one already shown, does nothing.
     let late = editor.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(2_500));
-        reveal_editor(&late);
+        if uncloak_editor(&late) {
+            bring_to_front(&late);
+        }
     });
     Ok(())
 }
 
-/// The editor window exists but is still cloaked (waiting for its page).
-static EDITOR_CLOAKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The editor window (by HWND) that is still cloaked, waiting for its page.
+static EDITOR_CLOAKED: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
-fn reveal_editor(editor: &tauri::WebviewWindow) {
-    if EDITOR_CLOAKED.swap(false, Ordering::SeqCst) {
-        win::cloak(capture::hwnd_of(editor), false);
+/// Takes the cloak off `editor` if it is the one waiting. Returns whether it was.
+fn uncloak_editor(editor: &tauri::WebviewWindow) -> bool {
+    let hwnd = capture::hwnd_of(editor);
+    if hwnd == 0 || EDITOR_CLOAKED.compare_exchange(hwnd, 0, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        return false;
     }
-    bring_to_front(editor);
+    win::cloak(hwnd, false);
+    true
 }
 
 /// The editor has drawn its picture: on screen and in front.
 #[tauri::command]
 async fn editor_show(app: AppHandle) {
     if let Some(editor) = app.get_webview_window("editor") {
-        reveal_editor(&editor);
+        uncloak_editor(&editor);
+        bring_to_front(&editor);
     }
 }
 
