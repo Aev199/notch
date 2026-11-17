@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, errorText, previewText, timeAgo, type TextEntry } from "../lib/api";
-import { CloseIcon, InsertIcon, PinIcon, SearchIcon } from "./Icons";
+import { CloseIcon, InsertIcon, PinIcon, ProjectIcon, SearchIcon } from "./Icons";
+import { SendToProject } from "./SendToProject";
 
 interface Props {
   entries: TextEntry[];
   /** Changes when the history hotkey asks for the keyboard: caret into the search. */
   focusSeq: number;
   onError: (message: string) => void;
+  /** A short message that something was done. */
+  onNotice: (message: string) => void;
 }
 
 /** Case- and ё-insensitive form for matching. */
@@ -15,7 +18,7 @@ const fold = (s: string) => s.toLocaleLowerCase("ru").replace(/ё/g, "е");
 // Survives switching tabs (the component unmounts) within one session.
 const memory = { handledFocus: 0 };
 
-export function Clipboard({ entries, focusSeq, onError }: Props) {
+export function Clipboard({ entries, focusSeq, onError, onNotice }: Props) {
   const [query, setQuery] = useState("");
   // Row picked with the arrow keys; Enter pastes it.
   const [selected, setSelected] = useState(0);
@@ -44,6 +47,8 @@ export function Clipboard({ entries, focusSeq, onError }: Props) {
 
   // The arrow-key row is marked only while the keyboard is in the search field.
   const [keyboard, setKeyboard] = useState(false);
+  // The text being sent to a Papka project.
+  const [sending, setSending] = useState<TextEntry | null>(null);
 
   const paste = (id: number) => void api.pasteEntry(id).catch((err) => onError(errorText(err)));
 
@@ -113,6 +118,16 @@ export function Clipboard({ entries, focusSeq, onError }: Props) {
                 Вставить
               </button>
               <button
+                className="icon-btn small"
+                title="В проект Papka…"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSending(entry);
+                }}
+              >
+                <ProjectIcon width={13} height={13} />
+              </button>
+              <button
                 className={`icon-btn small${entry.pinned ? " active" : ""}`}
                 title={entry.pinned ? "Открепить" : "Закрепить: не удаляется и хранится между запусками"}
                 onClick={(e) => {
@@ -136,6 +151,17 @@ export function Clipboard({ entries, focusSeq, onError }: Props) {
           </div>
         ))}
       </div>
+      {sending && (
+        <SendToProject
+          what="текст"
+          send={(project, caption) => api.papkaSendText(sending.text, project, caption)}
+          onDone={(message) => {
+            setSending(null);
+            onNotice(message);
+          }}
+          onClose={() => setSending(null)}
+        />
+      )}
     </div>
   );
 }

@@ -41,6 +41,19 @@ export interface FileEntry {
   missing: boolean;
 }
 
+/** A project of Papka, the file manager, for «В проект…». */
+export interface PapkaProject {
+  id: string;
+  name: string;
+  inbox: string;
+}
+
+export interface PapkaProjects {
+  projects: PapkaProject[];
+  /** Chosen last time, if still there. */
+  last: string | null;
+}
+
 export interface Settings {
   provider: Provider;
   deeplKey: string;
@@ -163,6 +176,15 @@ export const api = {
   captureShow: () => invoke("capture_show"),
   captureClose: () => invoke("capture_close"),
   captureText: (text: string, translate: boolean) => invoke("capture_text", { text, translate }),
+  papkaProjects: () => invoke<PapkaProjects>("papka_projects"),
+  papkaSendShelf: (id: string, project: string, caption: string) => invoke<string>("papka_send_shelf", { id, project, caption }),
+  papkaSendText: (text: string, project: string, caption: string) => invoke<string>("papka_send_text", { text, project, caption }),
+  papkaSendFile: (id: number, project: string, caption: string) => invoke<string>("papka_send_file", { id, project, caption }),
+  /** The capture's picture; headers carry ASCII only, so the caption is URI-encoded. */
+  papkaSendCapture: (png: Uint8Array, project: string, caption: string) =>
+    invoke<string>("papka_send_capture", png, {
+      headers: { "x-papka-project": encodeURIComponent(project), "x-papka-caption": encodeURIComponent(caption) },
+    }),
   updateInfo: () => invoke<UpdateInfo>("update_info"),
   updateCheck: () => invoke("update_check"),
   updateInstall: () => invoke("update_install"),

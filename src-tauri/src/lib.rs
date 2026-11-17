@@ -7,6 +7,7 @@ mod models;
 mod net;
 mod ocr;
 mod overlay;
+mod papka;
 mod state;
 mod updates;
 mod wake;
@@ -635,6 +636,11 @@ pub fn run() {
             capture::capture_show,
             capture::capture_close,
             capture::capture_text,
+            papka::papka_projects,
+            papka::papka_send_capture,
+            papka::papka_send_shelf,
+            papka::papka_send_text,
+            papka::papka_send_file,
             files_remove,
             files_clear,
             files_refresh,

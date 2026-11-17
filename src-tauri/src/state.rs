@@ -38,6 +38,8 @@ pub struct App {
     pub files: Mutex<FileShelf>,
     /// The frozen screen the capture window is showing, until it closes.
     pub capture: Mutex<Option<win::Screen>>,
+    /// The program and window PrintScreen was pressed over, for «В проект…».
+    pub capture_source: Mutex<notch_core::papka::Source>,
     pub hover: Mutex<HoverMachine>,
     pub expanded_size: Mutex<(f64, f64)>,
     /// Raw HWND of the overlay (0 until the window exists / off Windows).
@@ -79,6 +81,7 @@ impl App {
             data_dir,
             files: Mutex::new(files),
             capture: Mutex::new(None),
+            capture_source: Mutex::new(Default::default()),
             settings: Mutex::new(settings),
             texts: Mutex::new(texts),
             shelf: Mutex::new(shelf),

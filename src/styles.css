@@ -722,6 +722,11 @@ textarea {
   font-size: 12px;
 }
 
+.toast.ok {
+  background: #142a1d;
+  color: #a6e8bf;
+}
+
 /* Updates */
 .update-row {
   display: flex;
@@ -868,4 +873,95 @@ textarea {
   font-size: 11px;
   line-height: 1.35;
   color: var(--faint);
+}
+
+/* «В проект…»: covers the tab (or sits under the capture bar) until sent. */
+.papka-send {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--island);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 12px;
+}
+
+.papka-head,
+.papka-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.papka-head span {
+  color: var(--muted);
+}
+
+.papka-foot > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.papka-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 4px;
+}
+
+.papka-project {
+  height: 24px;
+  max-width: 100%;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--hover);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.papka-project.active {
+  background: var(--accent);
+  color: #0c1222;
+  font-weight: 600;
+}
+
+.papka-filter,
+.papka-caption {
+  flex: none;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  outline: none;
+  background: var(--hover);
+  color: var(--text);
+  font: inherit;
+}
+
+.papka-caption:focus,
+.papka-filter:focus {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* In the capture window the panel opens under the bar, not over the picture. */
+.cap-papka {
+  position: absolute;
+  width: 380px;
+  height: 220px;
 }

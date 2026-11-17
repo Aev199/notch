@@ -1,7 +1,8 @@
-import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import { api, errorText, sizeText, timeAgo, type FileEntry } from "../lib/api";
-import { CloseIcon, FolderIcon } from "./Icons";
+import { CloseIcon, FolderIcon, ProjectIcon } from "./Icons";
+import { SendToProject } from "./SendToProject";
 
 const DRAG_THRESHOLD = 5;
 
@@ -10,6 +11,8 @@ interface Props {
   /** Picture shown under the cursor while files are dragged out. */
   icon: string;
   onError: (message: string) => void;
+  /** A short message that something was done. */
+  onNotice: (message: string) => void;
 }
 
 /** "PDF" for the badge; folders and names without an extension get none. */
@@ -25,7 +28,9 @@ function folder(path: string): string {
   return cut > 0 ? path.slice(0, cut) : path;
 }
 
-export function Files({ entries, icon, onError }: Props) {
+export function Files({ entries, icon, onError, onNotice }: Props) {
+  // The file being sent to a Papka project (as a link).
+  const [sending, setSending] = useState<FileEntry | null>(null);
   const press = useRef<{ entry: FileEntry; x: number; y: number } | null>(null);
 
   // Files may have been moved or deleted since the tab was last looked at.
@@ -124,6 +129,11 @@ export function Files({ entries, icon, onError }: Props) {
                   <FolderIcon width={13} height={13} />
                 </button>
               )}
+              {!entry.missing && (
+                <button className="icon-btn small" title="В проект Papka… (ссылка на файл, сам файл не копируется)" onClick={() => setSending(entry)}>
+                  <ProjectIcon width={13} height={13} />
+                </button>
+              )}
               <button className="icon-btn small" title="Убрать с полки (файл останется на месте)" onClick={() => void api.filesRemove(entry.id)}>
                 <CloseIcon width={13} height={13} />
               </button>
@@ -131,6 +141,17 @@ export function Files({ entries, icon, onError }: Props) {
           </div>
         ))}
       </div>
+      {sending && (
+        <SendToProject
+          what={sending.isDir ? "ссылку на папку" : "ссылку на файл"}
+          send={(project, caption) => api.papkaSendFile(sending.id, project, caption)}
+          onDone={(message) => {
+            setSending(null);
+            onNotice(message);
+          }}
+          onClose={() => setSending(null)}
+        />
+      )}
     </div>
   );
 }

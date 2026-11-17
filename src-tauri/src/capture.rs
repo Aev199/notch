@@ -50,6 +50,10 @@ pub fn start(app: &AppHandle) {
 
 fn open(app: &AppHandle) -> Result<(), String> {
     let shared = app.state::<Shared>().inner().clone();
+    // Whatever was in front when PrintScreen was pressed: the drawing or
+    // document the screenshot is about.
+    let (app_name, window) = win::window_source(win::foreground_window());
+    *lock(&shared.capture_source) = notch_core::papka::Source { app: app_name, window };
     let screen = win::capture_cursor_monitor().ok_or("не удалось снять экран")?;
     let rect = (screen.x, screen.y, screen.width, screen.height);
     *lock(&shared.capture) = Some(screen);
