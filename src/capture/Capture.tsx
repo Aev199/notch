@@ -7,6 +7,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Pointer
 import { invoke } from "@tauri-apps/api/core";
 import { api, errorText, on } from "../lib/api";
 import { framesPresented } from "../lib/frames";
+import { animationsOn } from "../lib/motion";
 import { COLORS, DEFAULT_FONT, DEFAULT_WIDTH, render, textPx, unitOf, type Box, type Pt, type Shape } from "../editor/draw";
 import { ToolIcon } from "../editor/icons";
 import { extendMark, isTiny, MARK_TOOLS, nextFont, nextWidth, startMark, textMark, type MarkTool } from "../editor/marks";
@@ -31,6 +32,9 @@ type Drag =
   | { kind: "draw" };
 
 const GAP = 8;
+/** Where the notch's capsule sits: the top centre, its middle this low (CSS px). */
+const CAPSULE_Y = 16;
+const CAPSULE_W = 140;
 
 export function Capture() {
   const [img, setImg] = useState<ImageBitmap | null>(null);
@@ -49,9 +53,15 @@ export function Capture() {
   const [papka, setPapka] = useState(false);
   const [view, setView] = useState({ w: window.innerWidth, h: window.innerHeight });
   const [bar, setBar] = useState({ w: 0, h: 0 });
+  // The window is on screen: the dimming fades in ("the screen froze").
+  const [revealed, setRevealed] = useState(false);
+  // «Готово»: the picture is flying into the notch, the rest steps aside.
+  const [flying, setFlying] = useState(false);
 
   const root = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
+  // The dimming with a hole for the area, moved directly during a drag.
+  const hole = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const textField = useRef<HTMLTextAreaElement>(null);
   const drag = useRef<Drag | null>(null);
@@ -86,6 +96,9 @@ export function Capture() {
       setStatus(null);
       setBusy(false);
       setDragging(false);
+      setRevealed(false);
+      setFlying(false);
+      root.current?.querySelectorAll(".cap-fly").forEach((el) => el.remove());
       setView({ w: window.innerWidth, h: window.innerHeight });
       // A 4K screen is ~33 MB of pixels: free the previous one right away.
       setImg((old) => {
@@ -113,9 +126,22 @@ export function Capture() {
   const draw = useCallback(() => {
     if (!img || !canvas.current) return;
     const d = draft.current;
-    const area = live.current ?? { x: 0, y: 0, w: 0, h: 0 };
-    render(canvas.current, img, d ? [...shapes, d] : shapes, area, unit);
-  }, [img, shapes, unit]);
+    // The canvas holds the screen and the marks; the dimming and the frame
+    // are a layer above it, so they can fade.
+    // Flying: the marks left with the picture; what stays looks like the
+    // live screen.
+    render(canvas.current, img, flying ? [] : d ? [...shapes, d] : shapes, null, unit);
+    const el = hole.current;
+    if (el) {
+      const a = live.current;
+      const scale = img.width / window.innerWidth;
+      el.style.left = `${a ? a.x / scale : 0}px`;
+      el.style.top = `${a ? a.y / scale : 0}px`;
+      el.style.width = `${a ? a.w / scale : 0}px`;
+      el.style.height = `${a ? a.h / scale : 0}px`;
+      el.classList.toggle("framed", !!a);
+    }
+  }, [img, shapes, unit, flying]);
 
   // The newest `draw`: a frame queued during a drag must not paint with the
   // marks of an older render (the finished mark would vanish until the next
@@ -140,7 +166,10 @@ export function Capture() {
   useEffect(() => {
     if (!img || !pendingShow.current) return;
     pendingShow.current = false;
-    void framesPresented(300).then(() => api.captureShow().catch(() => void api.captureClose()));
+    void framesPresented(300)
+      .then(() => api.captureShow())
+      .then(() => requestAnimationFrame(() => setRevealed(true)))
+      .catch(() => void api.captureClose());
   }, [img]);
 
   // ---- marks -------------------------------------------------------------
@@ -246,16 +275,48 @@ export function Capture() {
   };
 
   // ---- output ------------------------------------------------------------
-  /** PNG of the area (the whole screen without one) with `marks` on it. */
-  const exportPng = async (marks: Shape[]): Promise<Uint8Array> => {
+  /** The area (the whole screen without one) with `marks` on it. */
+  const picture = (marks: Shape[]): HTMLCanvasElement => {
     if (!img) throw new Error("снимок не загружен");
     const a = sel ?? { x: 0, y: 0, w: img.width, h: img.height };
     const crop: Shape = { t: "crop", a: [a.x, a.y], b: [a.x + a.w, a.y + a.h] };
     const out = document.createElement("canvas");
     render(out, img, [...marks, crop], null, unit);
+    return out;
+  };
+
+  const pngOf = async (out: HTMLCanvasElement): Promise<Uint8Array> => {
     const blob = await new Promise<Blob | null>((ok) => out.toBlob(ok, "image/png"));
     if (!blob) throw new Error("не удалось собрать PNG");
     return new Uint8Array(await blob.arrayBuffer());
+  };
+
+  const exportPng = (marks: Shape[]) => pngOf(picture(marks));
+
+  /**
+   * The finished picture shrinks from its place into the notch at the top
+   * centre, while the dimming and the tools step aside.
+   */
+  const flyToNotch = async (out: HTMLCanvasElement) => {
+    if (!img || !animationsOn() || !root.current) return;
+    const a = sel ?? { x: 0, y: 0, w: img.width, h: img.height };
+    const box = { x: a.x / k, y: a.y / k, w: a.w / k, h: a.h / k };
+    out.className = "cap-fly";
+    Object.assign(out.style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px` });
+    root.current.append(out);
+    setFlying(true);
+    setRevealed(false);
+    const scale = Math.min(1, CAPSULE_W / box.w, (CAPSULE_W * 0.6) / box.h);
+    const dx = view.w / 2 - (box.x + box.w / 2);
+    const dy = CAPSULE_Y - (box.y + box.h / 2);
+    await out.animate(
+      [
+        { transform: "translate(0, 0) scale(1)", opacity: 1, borderRadius: "0px" },
+        { opacity: 1, offset: 0.7 },
+        { transform: `translate(${dx}px, ${dy}px) scale(${scale})`, opacity: 0, borderRadius: `${12 / scale}px` },
+      ],
+      { duration: 300, easing: "cubic-bezier(0.4, 0, 0.2, 1)", fill: "forwards" },
+    ).finished;
   };
 
   const run = async (job: () => Promise<void>) => {
@@ -275,8 +336,12 @@ export function Capture() {
     run(async () => {
       // Text still being typed belongs to the picture too.
       const typed = text && textMark(text.value, text.at, color, font);
-      const png = await exportPng(typed ? [...shapes, typed] : shapes);
+      const out = picture(typed ? [...shapes, typed] : shapes);
+      const png = await pngOf(out);
+      setText(null);
+      await flyToNotch(out);
       await api.captureClose();
+      // After the window is gone, so the notch is seen taking the picture.
       await invoke("editor_result", png, { headers: { "x-notch-action": "save", "x-notch-source": "" } });
     });
 
@@ -334,7 +399,10 @@ export function Capture() {
 
   // ---- layout of the floating parts (CSS px) -----------------------------
   const area = sel ? { x: sel.x / k, y: sel.y / k, w: sel.w / k, h: sel.h / k } : null;
-  const showBar = area && !dragging;
+  // The bar stays mounted while there is an area (it rises in once) and only
+  // steps aside while dragging or flying.
+  const showBar = !!area;
+  const barAway = dragging || flying;
 
   useLayoutEffect(() => {
     const el = barRef.current;
@@ -368,12 +436,15 @@ export function Capture() {
       onPointerCancel={onPointerUp}
     >
       <canvas ref={canvas} className="cap-canvas" />
+      <div className={`cap-dim${revealed ? " shown" : ""}`}>
+        <div ref={hole} className="cap-hole" />
+      </div>
 
-      {!area && !dragging && img && (
+      {!area && !dragging && img && revealed && (
         <div className="cap-hint">Выделите область · Enter — весь экран · Esc — отмена</div>
       )}
 
-      {area && !dragging && (
+      {area && !dragging && !flying && (
         <div
           className={`cap-area${tool === "select" ? " movable" : ""}`}
           style={{ left: area.x, top: area.y, width: area.w, height: area.h }}
@@ -384,7 +455,7 @@ export function Capture() {
         </div>
       )}
 
-      {sel && area && (
+      {sel && area && !flying && (
         <div className="cap-size" style={{ left: area.x + (area.y >= 26 ? 0 : 6), top: labelTop }}>
           {Math.round(sel.w)}x{Math.round(sel.h)}
         </div>
@@ -422,7 +493,7 @@ export function Capture() {
       {showBar && (
         <div
           ref={barRef}
-          className="cap-bar"
+          className={`cap-bar${barAway ? " away" : ""}`}
           style={{ left: barLeft, top: barTop, maxWidth: view.w - GAP * 2 }}
           onPointerDown={(e) => e.stopPropagation()}
         >
@@ -475,7 +546,7 @@ export function Capture() {
         </div>
       )}
 
-      {showBar && papka && (
+      {showBar && papka && !barAway && (
         <div
           className="cap-papka"
           style={{
@@ -488,7 +559,7 @@ export function Capture() {
         </div>
       )}
 
-      {(status || busy) && <div className={`cap-status${status ? " error" : ""}`}>{status ?? "Секунду…"}</div>}
+      {(status || (busy && !flying)) && <div className={`cap-status${status ? " error" : ""}`}>{status ?? "Секунду…"}</div>}
     </div>
   );
 }

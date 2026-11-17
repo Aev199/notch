@@ -322,6 +322,12 @@ async fn editor_result(request: tauri::ipc::Request<'_>, app: AppHandle, state: 
         }
         drop(shelf);
         state::emit_shelf(&app);
+        // From the capture window: the notch takes the picture visibly (the
+        // strip wakes, the counter flashes), as for a copied screenshot.
+        if source.is_empty() {
+            state::poke(&app);
+            let _ = app.emit("captured", "shelf");
+        }
     }
     clip::write_image(&state, w, h, rgba)
 }
