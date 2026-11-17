@@ -74,7 +74,7 @@ fn open(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn hwnd_of(window: &WebviewWindow) -> isize {
+pub fn hwnd_of(window: &WebviewWindow) -> isize {
     #[cfg(windows)]
     {
         window.hwnd().map(|h| h.0 as isize).unwrap_or(0)

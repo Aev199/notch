@@ -229,8 +229,7 @@ async fn open_editor(id: String, app: AppHandle, state: State<'_, Shared>) -> Re
     state::close_island(&app);
     if let Some(editor) = app.get_webview_window("editor") {
         let _ = editor.emit("editor-open", &id);
-        let _ = editor.unminimize();
-        let _ = editor.set_focus();
+        bring_to_front(&editor);
         return Ok(());
     }
     let (w, h) = app
@@ -243,16 +242,33 @@ async fn open_editor(id: String, app: AppHandle, state: State<'_, Shared>) -> Re
         })
         .unwrap_or((1200.0, 800.0));
     let url = WebviewUrl::App(format!("index.html?editor={id}").into());
-    WebviewWindowBuilder::new(&app, "editor", url)
+    let editor = WebviewWindowBuilder::new(&app, "editor", url)
         .title("Notch — редактор")
-        .always_on_top(true)
         .inner_size(w.max(720.0), h.max(480.0))
         .min_inner_size(640.0, 420.0)
         .center()
         .focused(true)
         .build()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    bring_to_front(&editor);
+    Ok(())
+}
+
+/// Opens a window in front of everything, then lets it be an ordinary
+/// window that others can cover. Windows does not let a background program
+/// (the notch never takes the focus) simply raise its window, so it goes
+/// topmost for a moment; dropping "topmost" afterwards keeps it on top of
+/// the ordinary windows.
+fn bring_to_front(window: &tauri::WebviewWindow) {
+    let _ = window.unminimize();
+    let _ = window.set_always_on_top(true);
+    let _ = window.set_focus();
+    win::force_foreground(capture::hwnd_of(window));
+    let window = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let _ = window.set_always_on_top(false);
+    });
 }
 
 /// The editor's result arrives as raw PNG bytes. Header `x-notch-action`:
