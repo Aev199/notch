@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
+import { AnimatePresence, motion } from "motion/react";
+import { FADE, MOVE } from "../lib/anim";
 import { api, errorText, timeAgo, type ShelfItem } from "../lib/api";
 import { BackIcon, CheckIcon, CopyIcon, ProjectIcon, TrashIcon, UngroupIcon } from "./Icons";
 import { SendToProject } from "./SendToProject";
@@ -213,14 +215,21 @@ export function Shelf({ items, onError, onNotice }: Props) {
           </button>
         </div>
       )}
-      <div className="shelf-grid" key={openGroup ?? "all"}>
+      <motion.div layoutScroll className="shelf-grid" key={openGroup ?? "all"}>
+        <AnimatePresence initial={false}>
         {tiles.map((tile) => {
           const first = tile.kind === "shot" ? tile.item : tile.items[0];
           const hot = drag?.over === tile.key;
           const lifted = drag?.key === tile.key;
           return (
-            <figure
+            <motion.figure
               key={tile.key}
+              // A new screenshot grows into its cell, the others move along.
+              layout
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: lifted ? 0.35 : 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              transition={{ ...FADE, layout: MOVE }}
               className={`tile${tile.kind === "group" ? " group" : ""}${hot ? " drop-hot" : ""}${lifted ? " lifted" : ""}`}
               data-drop={tile.key}
               title={
@@ -275,10 +284,11 @@ export function Shelf({ items, onError, onNotice }: Props) {
                   </button>
                 )}
               </div>
-            </figure>
+            </motion.figure>
           );
         })}
-      </div>
+        </AnimatePresence>
+      </motion.div>
       {sending && (
         <SendToProject
           what="снимок"

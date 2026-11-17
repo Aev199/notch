@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
+import { AnimatePresence, motion } from "motion/react";
+import { ROW } from "../lib/anim";
 import { api, errorText, sizeText, timeAgo, type FileEntry } from "../lib/api";
 import { CloseIcon, FolderIcon, ProjectIcon } from "./Icons";
 import { SendToProject } from "./SendToProject";
@@ -102,10 +104,12 @@ export function Files({ entries, icon, onError, onNotice }: Props) {
           </button>
         </div>
       )}
-      <div className="files">
+      <motion.div layoutScroll className="files">
+        <AnimatePresence initial={false}>
         {entries.map((entry) => (
-          <div
+          <motion.div
             key={entry.id}
+            {...ROW}
             className={`file${entry.missing ? " missing" : ""}`}
             role="button"
             tabIndex={-1}
@@ -138,9 +142,10 @@ export function Files({ entries, icon, onError, onNotice }: Props) {
                 <CloseIcon width={13} height={13} />
               </button>
             </span>
-          </div>
+          </motion.div>
         ))}
-      </div>
+        </AnimatePresence>
+      </motion.div>
       {sending && (
         <SendToProject
           what={sending.isDir ? "ссылку на папку" : "ссылку на файл"}

@@ -122,9 +122,27 @@ textarea {
   color: var(--text);
 }
 
+.tab {
+  position: relative;
+}
+
 .tab.active {
   color: var(--text);
-  border-bottom-color: var(--accent);
+}
+
+/* The accent line under the active tab: one element that slides between tabs. */
+.tab-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 2px;
+  background: var(--accent);
+}
+
+/* One tab's content; slides in from the side the tab is on. */
+.tab-pane {
+  height: 100%;
 }
 
 .tab-count {
@@ -366,8 +384,8 @@ textarea {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
 
+/* Its opacity is animated (Shelf.tsx). */
 .tile.lifted {
-  opacity: 0.35;
   pointer-events: none;
 }
 

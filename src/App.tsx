@@ -33,7 +33,12 @@ const SIZES: Record<Mode, { width: number; height: number; radius: number }> = {
 };
 
 /** Plain ease-out, no overshoot. */
-const RESIZE = { type: "tween" as const, ease: [0.2, 0.8, 0.2, 1] as const, duration: 0.18 };
+const EASE = [0.2, 0.8, 0.2, 1] as const;
+const RESIZE = { type: "tween" as const, ease: EASE, duration: 0.18 };
+const TAB_LINE = { type: "tween" as const, ease: EASE, duration: 0.16 };
+
+/** Left to right as on screen; the gear is last. */
+const TAB_ORDER: Tab[] = ["shelf", "files", "clipboard", "translate", "settings"];
 
 const TABS: { id: Exclude<Tab, "settings">; title: string }[] = [
   { id: "shelf", title: "Полка" },
@@ -63,6 +68,8 @@ export default function App() {
   const toastTimer = useRef<number>();
   // One counter for every request to the translator, whatever its source.
   const requestSeq = useRef(0);
+  // Which way the content slides when the tab changes.
+  const lastTab = useRef<Tab>(tab);
   // Re-render once a minute so "5 мин" labels stay true while open.
   useMinuteTick(mode === "open");
 
@@ -137,6 +144,10 @@ export default function App() {
   const tabs = TABS.filter((t) => t.id !== "files" || filesOn);
   // The tab was switched off in the settings while it was open.
   const shownTab: Tab = tab === "files" && !filesOn ? "shelf" : tab;
+  const slide = Math.sign(TAB_ORDER.indexOf(shownTab) - TAB_ORDER.indexOf(lastTab.current));
+  useEffect(() => {
+    lastTab.current = shownTab;
+  }, [shownTab]);
 
   return (
     <>
@@ -176,6 +187,7 @@ export default function App() {
                     <button key={id} className={`tab${shownTab === id ? " active" : ""}`} onClick={() => setTab(id)}>
                       {title}
                       {counts[id] > 0 && <span className="tab-count">{counts[id]}</span>}
+                      {shownTab === id && <motion.span layoutId="tab-line" className="tab-line" transition={TAB_LINE} />}
                     </button>
                   ))}
                   <span className="push" />
@@ -215,6 +227,13 @@ export default function App() {
                   </button>
                 </header>
                 <main className="content">
+                  <motion.div
+                    key={shownTab}
+                    className="tab-pane"
+                    initial={slide ? { opacity: 0, x: slide * 10 } : false}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ type: "tween", ease: EASE, duration: 0.16 }}
+                  >
                   {shownTab === "shelf" && <Shelf items={shelf} onError={showError} onNotice={showNotice} />}
                   {shownTab === "files" && snapshot && <Files entries={files} icon={snapshot.fileIcon} onError={showError} onNotice={showNotice} />}
                   {tab === "clipboard" && <Clipboard entries={texts} focusSeq={clipFocus} onError={showError} onNotice={showNotice} />}
@@ -230,6 +249,7 @@ export default function App() {
                       onAutostart={setAutostart}
                     />
                   )}
+                  </motion.div>
                 </main>
                 {toast && <div className={`toast${toast.ok ? " ok" : ""}`}>{toast.text}</div>}
               </motion.div>

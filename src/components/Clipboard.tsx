@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
+import { ROW } from "../lib/anim";
 import { api, errorText, previewText, timeAgo, type TextEntry } from "../lib/api";
 import { CloseIcon, InsertIcon, PinIcon, ProjectIcon, SearchIcon } from "./Icons";
 import { SendToProject } from "./SendToProject";
@@ -92,10 +94,12 @@ export function Clipboard({ entries, focusSeq, onError, onNotice }: Props) {
         />
         {(query || keyboard) && <span className="dim">{shown.length ? `${query ? `${shown.length} · ` : ""}↑↓ · Enter — вставить` : "ничего"}</span>}
       </label>
-      <div className="clips" ref={list}>
+      <motion.div layoutScroll className="clips" ref={list}>
+        <AnimatePresence initial={false}>
         {shown.map((entry, index) => (
-          <div
+          <motion.div
             key={entry.id}
+            {...ROW}
             className={`clip${entry.pinned ? " pinned" : ""}${keyboard && index === Math.min(selected, shown.length - 1) ? " selected" : ""}`}
             role="button"
             tabIndex={-1}
@@ -148,9 +152,10 @@ export function Clipboard({ entries, focusSeq, onError, onNotice }: Props) {
                 <CloseIcon width={13} height={13} />
               </button>
             </span>
-          </div>
+          </motion.div>
         ))}
-      </div>
+        </AnimatePresence>
+      </motion.div>
       {sending && (
         <SendToProject
           what="текст"
