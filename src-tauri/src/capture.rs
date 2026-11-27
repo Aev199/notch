@@ -160,6 +160,12 @@ pub async fn capture_show(app: AppHandle, state: tauri::State<'_, Shared>) -> Re
     win::flush_compositor();
     win::cloak(hwnd_of(&window), false);
     ON_SCREEN.store(true, Ordering::SeqCst);
+    // Preparation deliberately uses SW_SHOWNOACTIVATE. A plain set_focus
+    // can then be refused by Windows' foreground lock: the capture is
+    // visible, but Esc (and the other shortcuts) still goes to the app
+    // underneath. Activate only now, after the prepared frame is revealed,
+    // using the same foreground handoff as the annotation editor.
+    win::force_foreground(hwnd_of(&window));
     let _ = window.set_focus();
     Ok(())
 }
