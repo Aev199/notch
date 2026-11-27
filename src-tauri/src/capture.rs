@@ -70,6 +70,11 @@ fn open(app: &AppHandle) -> Result<(), String> {
         .resizable(false)
         .skip_taskbar(true)
         .always_on_top(true)
+        // Cloaking does not guarantee that WebView2 has submitted its first
+        // frame. Keep both the native window and the webview transparent so
+        // an empty frame cannot cover the monitor with a solid colour.
+        .transparent(true)
+        .background_color(tauri::window::Color(0, 0, 0, 0))
         .visible(false)
         .build()
         .map_err(|e| e.to_string())?;

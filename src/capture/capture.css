@@ -2,7 +2,9 @@
 html.is-capture,
 html.is-capture body,
 html.is-capture #root {
-  background: #000;
+  /* The canvas supplies the opaque screenshot. An unpainted frame during
+     reveal must leave the desktop visible, rather than flash black. */
+  background: transparent;
   overflow: hidden;
 }
 
