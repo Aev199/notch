@@ -55,21 +55,20 @@ fn open(app: &AppHandle) -> Result<(), String> {
     let (app_name, window) = win::window_source(win::foreground_window());
     *lock(&shared.capture_source) = notch_core::papka::Source { app: app_name, window };
     let screen = win::capture_cursor_monitor().ok_or("не удалось снять экран")?;
-    let rect = (screen.x, screen.y, screen.width, screen.height);
     *lock(&shared.capture) = Some(screen);
     if let Some(window) = app.get_webview_window(LABEL) {
         // The page is alive: it loads the new picture and asks to be shown.
-        prepare(&window, rect);
         return window.emit("capture-open", ()).map_err(|e| e.to_string());
     }
     let url = WebviewUrl::App("index.html?capture=1".into());
-    let window = WebviewWindowBuilder::new(app, LABEL, url)
+    WebviewWindowBuilder::new(app, LABEL, url)
         .title("Notch — снимок экрана")
         .decorations(false)
         .shadow(false)
         .resizable(false)
         .skip_taskbar(true)
         .always_on_top(true)
+        .focused(false)
         // Cloaking does not guarantee that WebView2 has submitted its first
         // frame. Keep both the native window and the webview transparent so
         // an empty frame cannot cover the monitor with a solid colour.
@@ -78,8 +77,8 @@ fn open(app: &AppHandle) -> Result<(), String> {
         .visible(false)
         .build()
         .map_err(|e| e.to_string())?;
-    // The page loads the picture by itself once it starts.
-    prepare(&window, rect);
+    // The page prepares the window through capture_image. Doing it here
+    // races the page on first use: a late prepare could cloak it again.
     Ok(())
 }
 
@@ -97,15 +96,21 @@ pub fn hwnd_of(window: &WebviewWindow) -> isize {
 
 /// Puts the window over the captured monitor, shown but cloaked: the page
 /// renders there unseen and uncloaks it with `capture_show`.
-fn prepare(window: &WebviewWindow, (x, y, width, height): (i32, i32, u32, u32)) {
+fn prepare(window: &WebviewWindow, (x, y, width, height): (i32, i32, u32, u32)) -> Result<(), String> {
     let hwnd = hwnd_of(window);
     win::no_transitions(hwnd);
     win::cloak(hwnd, true);
     // Position first: the size is then applied at that monitor's scale.
-    let _ = window.set_position(PhysicalPosition::new(x, y));
-    let _ = window.set_size(PhysicalSize::new(width, height));
-    let _ = window.set_position(PhysicalPosition::new(x, y));
-    let _ = window.show();
+    window.set_position(PhysicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+    window.set_size(PhysicalSize::new(width, height)).map_err(|e| e.to_string())?;
+    window.set_position(PhysicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+    // Tauri's show also activates the window. Until the picture is ready,
+    // leave the foreground app alone (including its active-window colours).
+    #[cfg(windows)]
+    win::show_no_activate(hwnd, true);
+    #[cfg(not(windows))]
+    window.show().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Off the screen at once (cloak: no hide animation), then really hidden so
@@ -127,7 +132,14 @@ fn finish(app: &AppHandle) {
 /// The frozen screen for the page: 8 bytes of width and height (u32 LE),
 /// then RGBA pixels.
 #[tauri::command]
-pub async fn capture_image(state: tauri::State<'_, Shared>) -> Result<tauri::ipc::Response, String> {
+pub async fn capture_image(app: AppHandle, state: tauri::State<'_, Shared>) -> Result<tauri::ipc::Response, String> {
+    let rect = {
+        let guard = lock(&state.capture);
+        let screen = guard.as_ref().ok_or("нет снимка экрана")?;
+        (screen.x, screen.y, screen.width, screen.height)
+    };
+    let window = app.get_webview_window(LABEL).ok_or("окно снимка закрыто")?;
+    prepare(&window, rect)?;
     let guard = lock(&state.capture);
     let screen = guard.as_ref().ok_or("нет снимка экрана")?;
     let mut out = Vec::with_capacity(8 + screen.rgba.len());
@@ -145,6 +157,7 @@ pub async fn capture_show(app: AppHandle, state: tauri::State<'_, Shared>) -> Re
     }
     let window = app.get_webview_window(LABEL).ok_or("окно снимка закрыто")?;
     let _ = window.set_always_on_top(true);
+    win::flush_compositor();
     win::cloak(hwnd_of(&window), false);
     ON_SCREEN.store(true, Ordering::SeqCst);
     let _ = window.set_focus();

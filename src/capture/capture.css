@@ -50,20 +50,19 @@ html.is-capture #root {
   color: var(--danger);
 }
 
-/* The dimming: a hole the size of the area, its shadow covers the rest.
-   Hidden while the window appears (it then looks exactly like the live
-   screen), then fades in — the moment the screen "freezes". */
+/* Paint the dimming with the screenshot before revealing the window.
+   Showing an undimmed frame first produces a brief bright flash. */
 .cap-dim {
   position: absolute;
   inset: 0;
   overflow: hidden;
   pointer-events: none;
-  opacity: 0;
+  opacity: 1;
   transition: opacity 0.14s ease-out;
 }
 
-.cap-dim.shown {
-  opacity: 1;
+.cap-dim.away {
+  opacity: 0;
 }
 
 .cap-hole {

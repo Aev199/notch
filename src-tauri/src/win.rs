@@ -564,6 +564,13 @@ mod imp {
         }
     }
 
+    /// Waits for DWM to consume the outstanding surface updates before reveal.
+    pub fn flush_compositor() {
+        unsafe {
+            windows_sys::Win32::Graphics::Dwm::DwmFlush();
+        }
+    }
+
     /// Turns off the fade/zoom Windows plays when the window shows or hides.
     pub fn no_transitions(raw: isize) {
         use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED};
@@ -726,6 +733,7 @@ mod imp {
         None
     }
     pub fn cloak(_: isize, _: bool) {}
+    pub fn flush_compositor() {}
     pub fn no_transitions(_: isize) {}
     pub fn capture_cursor_monitor() -> Option<super::Screen> {
         None

@@ -53,8 +53,6 @@ export function Capture() {
   const [papka, setPapka] = useState(false);
   const [view, setView] = useState({ w: window.innerWidth, h: window.innerHeight });
   const [bar, setBar] = useState({ w: 0, h: 0 });
-  // The window is on screen: the dimming fades in ("the screen froze").
-  const [revealed, setRevealed] = useState(false);
   // «Готово»: the picture is flying into the notch, the rest steps aside.
   const [flying, setFlying] = useState(false);
 
@@ -70,6 +68,8 @@ export function Capture() {
   const frame = useRef(0);
   // A new picture was drawn and waits to be shown.
   const pendingShow = useRef(false);
+  const loadSeq = useRef(0);
+  const bitmapRef = useRef<ImageBitmap | null>(null);
 
   const unit = img ? unitOf(img.width, img.height) : 1;
   /** Image pixels per CSS pixel. */
@@ -77,6 +77,7 @@ export function Capture() {
 
   // ---- loading -----------------------------------------------------------
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     try {
       const raw = new Uint8Array(await api.captureImage());
       const header = new DataView(raw.buffer, raw.byteOffset, 8);
@@ -84,6 +85,10 @@ export function Capture() {
       const h = header.getUint32(4, true);
       const pixels = new ImageData(new Uint8ClampedArray(raw.buffer, raw.byteOffset + 8, w * h * 4), w, h);
       const bitmap = await createImageBitmap(pixels);
+      if (seq !== loadSeq.current) {
+        bitmap.close();
+        return;
+      }
       drag.current = null;
       draft.current = null;
       live.current = null;
@@ -96,19 +101,17 @@ export function Capture() {
       setStatus(null);
       setBusy(false);
       setDragging(false);
-      setRevealed(false);
       setFlying(false);
       setPapka(false);
       root.current?.querySelectorAll(".cap-fly").forEach((el) => el.remove());
       setView({ w: window.innerWidth, h: window.innerHeight });
       // A 4K screen is ~33 MB of pixels: free the previous one right away.
-      setImg((old) => {
-        old?.close();
-        return bitmap;
-      });
+      bitmapRef.current?.close();
+      bitmapRef.current = bitmap;
+      setImg(bitmap);
     } catch {
       // Nothing to show: let the next PrintScreen start afresh.
-      void api.captureClose();
+      if (seq === loadSeq.current) void api.captureClose();
     }
   }, []);
 
@@ -118,6 +121,7 @@ export function Capture() {
     const onResize = () => setView({ w: window.innerWidth, h: window.innerHeight });
     window.addEventListener("resize", onResize);
     return () => {
+      ++loadSeq.current;
       void unlisten.then((off) => off());
       window.removeEventListener("resize", onResize);
     };
@@ -167,10 +171,13 @@ export function Capture() {
   useEffect(() => {
     if (!img || !pendingShow.current) return;
     pendingShow.current = false;
-    void framesPresented(300)
+    const controller = new AbortController();
+    void framesPresented(2_000, 3, { requireFrames: true, signal: controller.signal })
       .then(() => api.captureShow())
-      .then(() => requestAnimationFrame(() => setRevealed(true)))
-      .catch(() => void api.captureClose());
+      .catch(() => {
+        if (!controller.signal.aborted) void api.captureClose();
+      });
+    return () => controller.abort();
   }, [img]);
 
   // ---- marks -------------------------------------------------------------
@@ -306,7 +313,6 @@ export function Capture() {
     Object.assign(out.style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px` });
     root.current.append(out);
     setFlying(true);
-    setRevealed(false);
     const scale = Math.min(1, CAPSULE_W / box.w, (CAPSULE_W * 0.6) / box.h);
     const dx = view.w / 2 - (box.x + box.w / 2);
     const dy = CAPSULE_Y - (box.y + box.h / 2);
@@ -446,11 +452,11 @@ export function Capture() {
       onPointerCancel={onPointerUp}
     >
       <canvas ref={canvas} className="cap-canvas" />
-      <div className={`cap-dim${revealed ? " shown" : ""}`}>
+      <div className={`cap-dim${flying ? " away" : ""}`}>
         <div ref={hole} className="cap-hole" />
       </div>
 
-      {!area && !dragging && img && revealed && (
+      {!area && !dragging && img && !flying && (
         <div className="cap-hint">Выделите область · Enter — весь экран · Esc — отмена</div>
       )}
 
